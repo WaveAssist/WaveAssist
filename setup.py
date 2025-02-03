@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="waveassist",
-    version="0.0.2",
+    version="0.0.3",
     author="WaveAssist",
     author_email="kakshil.shah@waveassist.io",
     description="A package for WaveAssist Helper methods",
