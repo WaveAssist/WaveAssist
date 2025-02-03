@@ -14,7 +14,7 @@ import string
 
 class TestWAHelper(unittest.TestCase):
     def setUp(self):
-        self.uid = "14fe5bcd-8a50-43a6-b431-1b72b839cc06"
+        self.uid = "test_uid"
         self.project_key = "tp"
         self.data_key = "test_data"
         self.helper = WAHelper(self.uid)
