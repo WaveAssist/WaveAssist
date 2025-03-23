@@ -19,7 +19,7 @@ WaveAssist makes it simple to store and retrieve data in your WaveAssist.io work
 ### 1. Install
 
 ```bash
-pip install waveassist  # if you publish to PyPI later
+pip install waveassist
 ```
 
 ---
