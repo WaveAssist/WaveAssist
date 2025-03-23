@@ -12,8 +12,9 @@ from waveassist import _config
 # Dummy in-memory store
 mock_db = {}
 
-# Mock call_api
-def mock_call_api(path, payload):
+# ------------------ MOCKING ------------------
+
+def mock_call_post_api(path, payload):
     if path == 'data/set_data_for_key/':
         key = payload['data_key']
         mock_db[key] = {
@@ -21,27 +22,34 @@ def mock_call_api(path, payload):
             "data_type": payload["data_type"]
         }
         return True, {"message": "ok"}
+    return False, {"error": "Invalid POST path"}
 
-    elif path == 'data/fetch_data_for_key/':
-        key = payload['data_key']
+def mock_call_get_api(path, params):
+    if path == 'data/fetch_data_for_key/':
+        key = params['data_key']
         if key in mock_db:
-            return True, mock_db[key]
+            # mimic API JSON response structure
+            return True, {
+                "data": mock_db[key]["data"],
+                "data_type": mock_db[key]["data_type"]
+            }
         return False, {"error": "Key not found"}
+    return False, {"error": "Invalid GET path"}
 
-    return False, {"error": "Invalid path"}
-
-# Patch it manually
+# Patch into waveassist module
 import waveassist
-waveassist.call_api = mock_call_api
+waveassist.call_post_api = mock_call_post_api
+waveassist.call_get_api = mock_call_get_api
 
-# Reset function
+# ------------------ RESET FUNCTION ------------------
+
 def reset_state():
     _config.LOGIN_TOKEN = None
     _config.PROJECT_KEY = None
     _config.ENVIRONMENT_KEY = None
     mock_db.clear()
 
-# ----------- TEST CASES -----------
+# ------------------ TEST CASES ------------------
 
 def test_store_and_fetch_string():
     reset_state()
@@ -78,7 +86,7 @@ def test_fetch_without_init_raises():
         assert "not initialized" in str(e).lower()
         print("✅ test_fetch_without_init_raises passed")
 
-# ----------- RUN ALL -----------
+# ------------------ RUN ALL ------------------
 
 if __name__ == "__main__":
     test_store_and_fetch_string()
