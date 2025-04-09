@@ -8,7 +8,15 @@ def init(token: str, project_key: str, environment_key: str = None) -> None:
     """Initialize WaveAssist with credentials and project context."""
     _config.LOGIN_TOKEN = token
     _config.PROJECT_KEY = project_key
-    _config.ENVIRONMENT_KEY = environment_key or f"{project_key}_default"
+    _config.ENVIRONMENT_KEY = (
+            environment_key
+            or getattr(_config, "DEFAULT_ENVIRONMENT_KEY", None)
+            or f"{project_key}_default"
+    )
+
+
+def set_default_environment_key(key: str) -> None:
+    _config.DEFAULT_ENVIRONMENT_KEY = key
 
 
 def store_data(key: str, data):

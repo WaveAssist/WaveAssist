@@ -6,7 +6,7 @@ import json
 # Add the parent directory to sys.path so we can import waveassist
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from waveassist import init, store_data, fetch_data
+from waveassist import init, store_data, fetch_data, set_default_environment_key
 from waveassist import _config
 
 # Dummy in-memory store
@@ -28,7 +28,6 @@ def mock_call_get_api(path, params):
     if path == 'data/fetch_data_for_key/':
         key = params['data_key']
         if key in mock_db:
-            # mimic API JSON response structure
             return True, {
                 "data": mock_db[key]["data"],
                 "data_type": mock_db[key]["data_type"]
@@ -47,6 +46,7 @@ def reset_state():
     _config.LOGIN_TOKEN = None
     _config.PROJECT_KEY = None
     _config.ENVIRONMENT_KEY = None
+    _config.DEFAULT_ENVIRONMENT_KEY = None
     mock_db.clear()
 
 # ------------------ TEST CASES ------------------
@@ -86,6 +86,13 @@ def test_fetch_without_init_raises():
         assert "not initialized" in str(e).lower()
         print("✅ test_fetch_without_init_raises passed")
 
+def test_default_environment_key_used():
+    reset_state()
+    set_default_environment_key("fallback_env_123")
+    init("test-token", "my-project")  # No env key passed
+    assert _config.ENVIRONMENT_KEY == "fallback_env_123"
+    print("✅ test_default_environment_key_used passed")
+
 # ------------------ RUN ALL ------------------
 
 if __name__ == "__main__":
@@ -93,4 +100,5 @@ if __name__ == "__main__":
     test_store_and_fetch_json()
     test_store_and_fetch_dataframe()
     test_fetch_without_init_raises()
+    test_default_environment_key_used()
     print("\n🎉 All tests passed.")
