@@ -3,20 +3,55 @@ import pandas as pd
 from waveassist.utils import call_post_api, call_get_api
 from waveassist import _config
 import json
+import os
+from dotenv import load_dotenv
 
-def init(token: str, project_key: str, environment_key: str = None) -> None:
-    """Initialize WaveAssist with credentials and project context."""
-    _config.LOGIN_TOKEN = token
-    _config.PROJECT_KEY = project_key
-    _config.ENVIRONMENT_KEY = (
-            environment_key
-            or getattr(_config, "DEFAULT_ENVIRONMENT_KEY", None)
-            or f"{project_key}_default"
+
+def init(token: str = None, project_key: str = None, environment_key: str = None) -> None:
+    load_dotenv()  # Load from .env if it exists
+
+    # Resolve UID/token
+    resolved_token = (
+        token or
+        os.getenv("uid") or
+        getattr(_config, "DEFAULT_LOGIN_TOKEN", None)
     )
 
+    # Resolve project_key
+    resolved_project_key = (
+        project_key or
+        os.getenv("project_key") or
+        getattr(_config, "DEFAULT_PROJECT_KEY", None)
+    )
 
-def set_default_environment_key(key: str) -> None:
-    _config.DEFAULT_ENVIRONMENT_KEY = key
+    # Resolve env_key
+    resolved_env_key = (
+        environment_key or
+        os.getenv("environment_key") or
+        getattr(_config, "DEFAULT_ENVIRONMENT_KEY", None) or
+        f"{resolved_project_key}_default" if resolved_project_key else None
+    )
+
+    # Validate critical keys
+    if not resolved_token:
+        raise ValueError("WaveAssist init failed: UID is missing. Pass explicitly or set uid in .env.")
+    if not resolved_project_key:
+        raise ValueError("WaveAssist init failed: project key is missing. Pass explicitly or set project_key in .env.")
+
+    # Set config
+    _config.LOGIN_TOKEN = resolved_token
+    _config.PROJECT_KEY = resolved_project_key
+    _config.ENVIRONMENT_KEY = resolved_env_key
+
+def set_worker_defaults(
+    token: str = None,
+    project_key: str = None,
+    environment_key: str = None
+) -> None:
+    """Set default values for login token, project key, and environment key."""
+    _config.DEFAULT_LOGIN_TOKEN = token
+    _config.DEFAULT_PROJECT_KEY = project_key
+    _config.DEFAULT_ENVIRONMENT_KEY = environment_key
 
 
 def store_data(key: str, data):

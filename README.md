@@ -1,3 +1,8 @@
+Here's the updated **README** reflecting the new flexible `init()` behavior, `.env` support, and auto-resolution flow:
+
+---
+
+````markdown
 # WaveAssist Python SDK 🌊
 
 WaveAssist makes it simple to store and retrieve data in your WaveAssist.io workflows.
@@ -6,11 +11,12 @@ WaveAssist makes it simple to store and retrieve data in your WaveAssist.io work
 
 ## ✨ Features
 
-- 🔐 Simple `init()` to connect with your project
-- 📦 Store and retrieve data (DataFrames, JSON, or strings)
+- 🔐 One-line `init()` to connect with your project
+- ⚙️ Automatically works on local and cloud (worker) environments
+- 📦 Store and retrieve data (DataFrames, JSON, strings)
 - 🧠 LLM-friendly function names (`init`, `store_data`, `fetch_data`)
 - 📁 Auto-serialization for common Python objects
-- ✅ Ready for integration with any workflow or script
+- ✅ Built for automation workflows, cron jobs, and AI pipelines
 
 ---
 
@@ -20,7 +26,7 @@ WaveAssist makes it simple to store and retrieve data in your WaveAssist.io work
 
 ```bash
 pip install waveassist
-```
+````
 
 ---
 
@@ -29,12 +35,33 @@ pip install waveassist
 ```python
 import waveassist
 
+# Option 1: Use no arguments (recommended)
+waveassist.init()
+
+# Will auto-resolve from:
+# 1. Explicit args (if passed)
+# 2. .env file (WA_UID, WA_PROJECT_KEY, WA_ENV_KEY)
+# 3. Worker-injected credentials (on WaveAssist cloud)
+
+# Option 2: Use explicit arguments
 waveassist.init(
-    token="your-api-token-or-uid",
+    token="your-user-id-or-api-token",
     project_key="your-project-id",
-    environment_key="optional-env"  # defaults to <project_key>_default
+    environment_key="optional-env"  # Defaults to <project_key>_default
 )
 ```
+
+#### 🛠 Setting up `.env` (for local runs)
+
+```env
+uid=your-user-id
+project_key=your-project-key
+
+#optional
+environment_key=your-env-key  # optional
+```
+
+This file will be ignored by Git if you use our default `.gitignore`.
 
 ---
 
@@ -87,10 +114,10 @@ python tests/run_tests.py
 
 ✅ Includes tests for:
 
-- String roundtrip
-- JSON/dict roundtrip
-- DataFrame roundtrip
-- Error case when `init()` is missing
+* String roundtrip
+* JSON/dict roundtrip
+* DataFrame roundtrip
+* Error if `init()` is not called
 
 ---
 
@@ -110,15 +137,9 @@ WaveAssist/
 
 ## 📌 Notes
 
-- Data is stored in your backend (MongoDB) as serialized strings (JSON, CSV, etc.)
-- `store_data()` auto-detects the type of the object and serializes accordingly
-- `fetch_data()` deserializes and returns the proper Python object
-
----
-
-## 🤝 Contributing
-
-Want to add new features/formats or integrations? PRs welcome!
+* Data is stored in your WaveAssist backend (e.g. MongoDB) as serialized content
+* `store_data()` auto-detects the object type and serializes it (CSV/JSON/text)
+* `fetch_data()` deserializes it back to the right Python object
 
 ---
 
@@ -126,25 +147,33 @@ Want to add new features/formats or integrations? PRs welcome!
 
 ```python
 import waveassist
-waveassist.init("my-token", "project123")
+waveassist.init()  # Auto-initialized from .env or worker
 
-# Store GitHub PR data from an automation job
+# Store GitHub PR data
 waveassist.store_data("latest_pr", {
     "title": "Fix bug in auth",
     "author": "alice",
     "status": "open"
 })
 
-# Later, fetch it for processing
+# Later, fetch it for further processing
 pr = waveassist.fetch_data("latest_pr")
 print(pr["title"])
 ```
 
 ---
 
-## 📬 Contact
 
-Need help or have feedback? Reach out at [connect@waveassist.io] or open an issue.
+## 🤝 Contributing
+
+Want to add formats, features, or cloud extensions? PRs welcome!
 
 ---
+
+## 📬 Contact
+
+Need help or have feedback? Reach out at [connect@waveassist.io](mailto:connect@waveassist.io) or open an issue.
+
+---
+
 © 2025 WaveAssist

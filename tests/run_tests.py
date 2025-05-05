@@ -1,12 +1,13 @@
 import sys
 import os
 import pandas as pd
-import json
+from pathlib import Path
+from dotenv import load_dotenv
 
 # Add the parent directory to sys.path so we can import waveassist
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from waveassist import init, store_data, fetch_data, set_default_environment_key
+from waveassist import init, store_data, fetch_data, set_worker_defaults
 from waveassist import _config
 
 # Dummy in-memory store
@@ -47,7 +48,11 @@ def reset_state():
     _config.PROJECT_KEY = None
     _config.ENVIRONMENT_KEY = None
     _config.DEFAULT_ENVIRONMENT_KEY = None
+    _config.DEFAULT_PROJECT_KEY = None
+    _config.DEFAULT_LOGIN_TOKEN = None
     mock_db.clear()
+    for var in ["uid", "project_key", "environment_key"]:
+        os.environ.pop(var, None)
 
 # ------------------ TEST CASES ------------------
 
@@ -88,10 +93,44 @@ def test_fetch_without_init_raises():
 
 def test_default_environment_key_used():
     reset_state()
-    set_default_environment_key("fallback_env_123")
+    set_worker_defaults(environment_key="fallback_env_123")
     init("test-token", "my-project")  # No env key passed
     assert _config.ENVIRONMENT_KEY == "fallback_env_123"
     print("✅ test_default_environment_key_used passed")
+
+def test_env_fallbacks():
+    reset_state()
+    set_worker_defaults(token="fallback-token", project_key="fallback-project", environment_key="fallback-env")
+    init()  # Use fallback resolution
+    assert _config.LOGIN_TOKEN == "fallback-token"
+    assert _config.PROJECT_KEY == "fallback-project"
+    assert _config.ENVIRONMENT_KEY == "fallback-env"
+    print("✅ test_env_fallbacks passed")
+
+def test_init_from_dotenv():
+    reset_state()
+
+    # Create a temporary .env file with final format
+    env_path = Path(".env")
+    env_path.write_text("""\
+uid='2fec42dd-492b-4294-8154-d33c3ccf'
+project_key='gitzoid_test'
+environment_key='default_gitzoid_test'
+""")
+
+    # Load .env explicitly
+    load_dotenv(dotenv_path=env_path, override=True)
+
+    # Should use .env values
+    init()
+
+    assert _config.LOGIN_TOKEN == "2fec42dd-492b-4294-8154-d33c3ccf"
+    assert _config.PROJECT_KEY == "gitzoid_test"
+    assert _config.ENVIRONMENT_KEY == "default_gitzoid_test"
+    print("✅ test_init_from_dotenv passed")
+
+    # Clean up
+    env_path.unlink(missing_ok=True)
 
 # ------------------ RUN ALL ------------------
 
@@ -101,4 +140,6 @@ if __name__ == "__main__":
     test_store_and_fetch_dataframe()
     test_fetch_without_init_raises()
     test_default_environment_key_used()
+    test_env_fallbacks()
+    test_init_from_dotenv()
     print("\n🎉 All tests passed.")
