@@ -53,6 +53,8 @@ def set_worker_defaults(
     _config.DEFAULT_PROJECT_KEY = project_key
     _config.DEFAULT_ENVIRONMENT_KEY = environment_key
 
+def set_default_environment_key(key: str) -> None:
+    _config.DEFAULT_ENVIRONMENT_KEY = key
 
 def store_data(key: str, data):
     """Serialize the data based on its type and store it in the WaveAssist backend."""
