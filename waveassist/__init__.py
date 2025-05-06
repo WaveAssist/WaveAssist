@@ -6,9 +6,17 @@ import json
 import os
 from dotenv import load_dotenv
 
+from pathlib import Path
+
+def _conditionally_load_env():
+    # Only load .env if UID/project_key aren't set
+    if not os.getenv("uid") or not os.getenv("project_key"):
+        env_path = Path.cwd() / ".env"  # Use the project root (not library path)
+        load_dotenv(dotenv_path=env_path, override=False)
+
 
 def init(token: str = None, project_key: str = None, environment_key: str = None) -> None:
-    load_dotenv()  # Load from .env if it exists
+    _conditionally_load_env()  # Load from .env if it exists
 
     # Resolve UID/token
     resolved_token = (
