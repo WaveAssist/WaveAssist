@@ -1,22 +1,17 @@
-Here's the updated **README** reflecting the new flexible `init()` behavior, `.env` support, and auto-resolution flow:
-
----
-
-````markdown
 # WaveAssist Python SDK 🌊
 
-WaveAssist makes it simple to store and retrieve data in your WaveAssist.io workflows.
+WaveAssist makes it simple to store and retrieve data in your automation workflows.
 
 ---
 
 ## ✨ Features
 
-- 🔐 One-line `init()` to connect with your project
-- ⚙️ Automatically works on local and cloud (worker) environments
-- 📦 Store and retrieve data (DataFrames, JSON, strings)
-- 🧠 LLM-friendly function names (`init`, `store_data`, `fetch_data`)
-- 📁 Auto-serialization for common Python objects
-- ✅ Built for automation workflows, cron jobs, and AI pipelines
+* 🔐 One-line `init()` to connect with your [WaveAssist](https://waveassist.io) project
+* ⚙️ Automatically works on local and [WaveAssist Cloud](https://waveassist.io) (worker) environments
+* 📦 Store and retrieve data (DataFrames, JSON, strings)
+* 🧠 LLM-friendly function names (`init`, `store_data`, `fetch_data`)
+* 📁 Auto-serialization for common Python objects
+* ✅ Built for automation workflows, cron jobs, and AI pipelines
 
 ---
 
@@ -26,7 +21,7 @@ WaveAssist makes it simple to store and retrieve data in your WaveAssist.io work
 
 ```bash
 pip install waveassist
-````
+```
 
 ---
 
@@ -41,14 +36,7 @@ waveassist.init()
 # Will auto-resolve from:
 # 1. Explicit args (if passed)
 # 2. .env file (WA_UID, WA_PROJECT_KEY, WA_ENV_KEY)
-# 3. Worker-injected credentials (on WaveAssist cloud)
-
-# Option 2: Use explicit arguments
-waveassist.init(
-    token="your-user-id-or-api-token",
-    project_key="your-project-id",
-    environment_key="optional-env"  # Defaults to <project_key>_default
-)
+# 3. Worker-injected credentials (on [WaveAssist Cloud](https://waveassist.io))
 ```
 
 #### 🛠 Setting up `.env` (for local runs)
@@ -57,8 +45,8 @@ waveassist.init(
 uid=your-user-id
 project_key=your-project-key
 
-#optional
-environment_key=your-env-key  # optional
+# optional
+environment_key=your-env-key
 ```
 
 This file will be ignored by Git if you use our default `.gitignore`.
@@ -137,7 +125,7 @@ WaveAssist/
 
 ## 📌 Notes
 
-* Data is stored in your WaveAssist backend (e.g. MongoDB) as serialized content
+* Data is stored in your [WaveAssist backend](https://waveassist.io) (e.g. MongoDB) as serialized content
 * `store_data()` auto-detects the object type and serializes it (CSV/JSON/text)
 * `fetch_data()` deserializes it back to the right Python object
 
@@ -163,7 +151,6 @@ print(pr["title"])
 
 ---
 
-
 ## 🤝 Contributing
 
 Want to add formats, features, or cloud extensions? PRs welcome!
@@ -172,8 +159,9 @@ Want to add formats, features, or cloud extensions? PRs welcome!
 
 ## 📬 Contact
 
-Need help or have feedback? Reach out at [connect@waveassist.io](mailto:connect@waveassist.io) or open an issue.
+Need help or have feedback? Reach out at [connect@waveassist.io](mailto:connect@waveassist.io), visit [WaveAssist.io](https://waveassist.io), or open an issue.
 
 ---
 
-© 2025 WaveAssist
+© 2025 [WaveAssist](https://waveassist.io)
+
