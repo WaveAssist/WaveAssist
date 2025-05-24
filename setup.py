@@ -37,4 +37,9 @@ setup(
         "Operating System :: OS Independent",
     ],
     python_requires=">=3.6",
+    entry_points={
+        "console_scripts": [
+            "waveassist=waveassist.cli:main",  # this line enables `waveassist` CLI
+        ]
+    },
 )
