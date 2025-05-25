@@ -13,8 +13,7 @@ import shutil
 
 
 CONFIG_PATH = Path.home() / ".waveassist" / "config.json"
-# API_BASE_URL = "https://api.waveassist.io"
-API_BASE_URL = "http://localhost:8000"  # For local development
+API_BASE_URL = "https://api.waveassist.io"
 
 def save_token(uid: str):
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -38,13 +37,16 @@ def login():
             res = requests.get(f"{API_BASE_URL}/cli_login/session/{session_id}/status", timeout=3)
             if res.status_code == 200:
                 data = res.json()
-                uid = data.get("data", {}).get("uid")
-                if uid:
-                    save_token(uid)
-                    return
-        except requests.RequestException:
+                success = data.get("success", '0')
+                if str(success) == '1':
+                    uid = data.get("data", '')
+                    if uid:
+                        save_token(uid)
+                        return
+        except Exception as e:
+            print("🌐 Error with checking login status. Retrying..." + str(e))
             pass
-        time.sleep(2)
+        time.sleep(1)
 
     print("❌ Login timed out. Please try again.")
     sys.exit(1)
@@ -90,7 +92,8 @@ def pull(project_id: str, force=False):
 
             # Optional: Confirm before overwrite
             if not force:
-                confirm = input("⚠️ This will overwrite your current files. Continue? (y/N): ")
+                confirm = input(
+                    "⚠️ This will fetch files from WaveAssist and replace any with the same name in this folder. Continue? (y/N): ")
                 if confirm.lower() != "y":
                     print("❌ Aborted.")
                     return
@@ -112,7 +115,7 @@ def pull(project_id: str, force=False):
 
         print("✅ Pull complete. Your local project is now up to date.")
     except Exception as e:
-        print("❌ Pull failed:", str(e))
+        print("❌ Pull failed. Error message: ", str(e))
 
 
 
@@ -136,21 +139,19 @@ def push(project_id: str = None, force=False):
 
     # Create zip bundle
     bundle_path = tempfile.NamedTemporaryFile(delete=False, suffix=".zip").name
-    ignore = set()
-    if Path(".waignore").exists():
-        ignore = set(Path(".waignore").read_text().splitlines())
 
     with zipfile.ZipFile(bundle_path, "w") as bundle:
         for root, _, files in os.walk("."):
             for file in files:
                 rel_path = os.path.relpath(os.path.join(root, file), ".")
-                if rel_path.startswith(".git") or rel_path in ignore:
+                if ".git" in rel_path or ".env" in rel_path:
                     continue
                 bundle.write(os.path.join(root, file), rel_path)
 
     # Optional: Confirm before overwrite
     if not force:
-        confirm = input("⚠️ This will overwrite your current files. Continue? (y/N): ")
+        confirm = input(
+            "⚠️ This will replace the code on WaveAssist with files listed in config.yml. Continue? (y/N): ")
         if confirm.lower() != "y":
             print("❌ Aborted.")
             return
@@ -163,7 +164,6 @@ def push(project_id: str = None, force=False):
             headers={"Authorization": f"Bearer {uid}"},
             files={"bundle": ("bundle.zip", f, "application/zip")},
         )
-
     if res.ok:
         print("✅ Project pushed to WaveAssist.")
     else:
