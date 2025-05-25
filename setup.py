@@ -10,7 +10,7 @@ with open(readme_path, encoding="utf-8") as f:
 
 setup(
     name="waveassist",
-    version="0.1.0",
+    version="0.1.1",
     author="WaveAssist",
     author_email="kakshil.shah@waveassist.io",
     description="WaveAssist Python SDK for storing and retrieving structured data",
@@ -37,4 +37,9 @@ setup(
         "Operating System :: OS Independent",
     ],
     python_requires=">=3.6",
+    entry_points={
+        "console_scripts": [
+            "waveassist=waveassist.cli:main",  # this line enables `waveassist` CLI
+        ]
+    },
 )
