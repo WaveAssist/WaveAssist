@@ -1,6 +1,6 @@
-# WaveAssist Python SDK 🌊
+# WaveAssist SDK & CLI 🌊
 
-WaveAssist makes it simple to store and retrieve data in your automation workflows.
+WaveAssist makes it simple to store and retrieve data in your automation workflows. Access your projects through our Python SDK or CLI.
 
 ---
 
@@ -11,6 +11,7 @@ WaveAssist makes it simple to store and retrieve data in your automation workflo
 * 📦 Store and retrieve data (DataFrames, JSON, strings)
 * 🧠 LLM-friendly function names (`init`, `store_data`, `fetch_data`)
 * 📁 Auto-serialization for common Python objects
+* 🖥️ Command-line interface for project management
 * ✅ Built for automation workflows, cron jobs, and AI pipelines
 
 ---
@@ -89,6 +90,44 @@ result = waveassist.fetch_data("user_scores")
 # - A dict/list (if stored as JSON)
 # - A string (if stored as text)
 ```
+
+---
+
+## 🖥️ Command Line Interface
+
+WaveAssist CLI comes bundled with the Python package. After installation, you can use the following commands:
+
+### 🔑 Authentication
+
+```bash
+waveassist login
+```
+
+This will open your browser for authentication and store the token locally.
+
+### 📤 Push Code
+
+```bash
+waveassist push PROJECT_ID [--force]
+```
+
+Push your local Python code to a WaveAssist project.
+
+### 📥 Pull Code
+
+```bash
+waveassist pull PROJECT_ID [--force]
+```
+
+Pull Python code from a WaveAssist project to your local machine.
+
+### ℹ️ Version Info
+
+```bash
+waveassist version
+```
+
+Display CLI version and environment information.
 
 ---
 
