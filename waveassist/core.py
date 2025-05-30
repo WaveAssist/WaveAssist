@@ -23,7 +23,7 @@ def save_token(uid: str):
 
 def login():
     session_id = str(uuid.uuid4())
-    login_url = f"http://localhost:5173/login?session_id={session_id}"
+    login_url = f"{API_BASE_URL}/login?session_id={session_id}"
     print("🔐 Opening browser for login...")
     webbrowser.open(login_url)
 
