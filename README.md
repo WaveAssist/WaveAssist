@@ -108,7 +108,7 @@ This will open your browser for authentication and store the token locally.
 ### 📤 Push Code
 
 ```bash
-waveassist push PROJECT_ID [--force]
+waveassist push PROJECT_KEY [--force]
 ```
 
 Push your local Python code to a WaveAssist project.
@@ -116,7 +116,7 @@ Push your local Python code to a WaveAssist project.
 ### 📥 Pull Code
 
 ```bash
-waveassist pull PROJECT_ID [--force]
+waveassist pull PROJECT_KEY [--force]
 ```
 
 Pull Python code from a WaveAssist project to your local machine.

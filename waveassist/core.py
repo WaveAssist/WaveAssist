@@ -53,7 +53,7 @@ def login():
 
 
 
-def pull(project_id: str, force=False):
+def pull(project_key: str, force=False):
     if not CONFIG_PATH.exists():
         print("❌ Not logged in. Run `waveassist login` first.")
         return
@@ -70,7 +70,7 @@ def pull(project_id: str, force=False):
 
     try:
         res = requests.get(
-            f"{API_BASE_URL}/cli/project/{project_id}/pull_bundle/",
+            f"{API_BASE_URL}/cli/project/{project_key}/pull_bundle/",
             headers={"Authorization": f"Bearer {uid}"},
             stream=True
         )
@@ -119,7 +119,7 @@ def pull(project_id: str, force=False):
 
 
 
-def push(project_id: str = None, force=False):
+def push(project_key: str = None, force=False):
     if not CONFIG_PATH.exists():
         print("❌ Not logged in. Run `waveassist login` first.")
         return
@@ -160,7 +160,7 @@ def push(project_id: str = None, force=False):
     print("📦 Uploading bundle...")
     with open(bundle_path, "rb") as f:
         res = requests.post(
-            f"{API_BASE_URL}/cli/project/{project_id}/push_bundle/",
+            f"{API_BASE_URL}/cli/project/{project_key}/push_bundle/",
             headers={"Authorization": f"Bearer {uid}"},
             files={"bundle": ("bundle.zip", f, "application/zip")},
         )
