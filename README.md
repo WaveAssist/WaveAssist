@@ -1,6 +1,6 @@
 # WaveAssist SDK & CLI 🌊
 
-WaveAssist makes it simple to store and retrieve data in your automation workflows. Access your projects through our Python SDK or CLI.
+WaveAssist SDK makes it simple to store and retrieve data in your automation workflows. Access your projects through our Python SDK or CLI.
 
 ---
 
