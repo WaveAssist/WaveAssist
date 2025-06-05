@@ -148,8 +148,8 @@ def send_mail(to_email, subject, html_content, from_email=None):
         "html_content": html_content,
     }
     print(params)
-    path = 'sdk/send_email'
-    success, response = call_get_api(path, params)
+    path = 'sdk/send_email/'
+    success, response = call_post_api(path, params)
 
     if not success:
         print("❌ Error sending email:", response)
