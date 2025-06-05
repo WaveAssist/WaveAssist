@@ -14,6 +14,7 @@ import shutil
 
 CONFIG_PATH = Path.home() / ".waveassist" / "config.json"
 API_BASE_URL = "https://api.waveassist.io"
+DASHBOARD_URL = "https://app.waveassist.io"
 
 def save_token(uid: str):
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -23,7 +24,7 @@ def save_token(uid: str):
 
 def login():
     session_id = str(uuid.uuid4())
-    login_url = f"{API_BASE_URL}/login?session_id={session_id}"
+    login_url = f"{DASHBOARD_URL}/login?session_id={session_id}"
     print("🔐 Opening browser for login...")
     webbrowser.open(login_url)
 

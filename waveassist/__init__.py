@@ -6,6 +6,7 @@ import json
 import os
 from dotenv import load_dotenv
 
+
 from pathlib import Path
 
 def _conditionally_load_env():
@@ -128,3 +129,23 @@ def fetch_data(key: str):
     else:
         print(f"⚠️ Unsupported data_type: {data_type}")
         return None
+
+
+def send_mail(to_email:str, subject:str, html_content:str):
+    """Retrieve the data stored under `key` from the WaveAssist backend."""
+    if not _config.LOGIN_TOKEN or not _config.PROJECT_KEY:
+        raise Exception("WaveAssist is not initialized. Please call waveassist.init(...) first.")
+    params = {
+        'uid': _config.LOGIN_TOKEN,
+        'project_key': _config.PROJECT_KEY,
+        "to_email": to_email,
+        "subject": subject,
+        "html_content": html_content,
+    }
+    path = 'sdk/send_email/'
+    success, response = call_post_api(path, params)
+    if not success:
+        print("❌ Error sending email:", response)
+    else:
+        print("✅ Email sent successfully.")
+    return success
