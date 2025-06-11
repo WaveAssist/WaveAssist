@@ -131,21 +131,33 @@ def fetch_data(key: str):
         return None
 
 
-def send_mail(to_email:str, subject:str, html_content:str):
-    """Retrieve the data stored under `key` from the WaveAssist backend."""
+def send_mail(subject: str, html_content: str, attachment_file=None):
+    """Send an email with optional attachment file object via the WaveAssist backend."""
     if not _config.LOGIN_TOKEN or not _config.PROJECT_KEY:
         raise Exception("WaveAssist is not initialized. Please call waveassist.init(...) first.")
-    params = {
+
+    data = {
         'uid': _config.LOGIN_TOKEN,
         'project_key': _config.PROJECT_KEY,
-        "to_email": to_email,
-        "subject": subject,
-        "html_content": html_content,
+        'subject': subject,
+        'html_content': html_content,
     }
+
+    files = None
+    if attachment_file:
+        try:
+            file_name = getattr(attachment_file, 'name', 'attachment')
+            files = {'attachment': (file_name, attachment_file)}
+        except Exception as e:
+            print("❌ Invalid attachment:", e)
+            return False
+
     path = 'sdk/send_email/'
-    success, response = call_post_api(path, params)
+    success, response = call_post_api(path, data, files=files)
+
     if not success:
         print("❌ Error sending email:", response)
     else:
         print("✅ Email sent successfully.")
+
     return success

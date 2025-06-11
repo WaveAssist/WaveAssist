@@ -1,21 +1,32 @@
 import requests
 
-BASE_URL ="https://api.waveassist.io"
-def call_post_api(path, body) -> tuple:
+# BASE_URL ="https://api.waveassist.io"
+BASE_URL ="http://127.0.0.1:8080"
+def call_post_api(path, body, files=None) -> tuple:
     url = f"{BASE_URL}/{path}"
-    headers = { "Content-Type": "application/json" }  # JSON content
+
     try:
-        response = requests.post(url, json=body, headers=headers)  # Sends proper JSON
-        response_dict = response.json()
+        response = requests.post(url, data=body, files=files or {})
+
+        # ✅ Inspect raw response content first
+        content_type = response.headers.get("Content-Type", "")
+        if "application/json" in content_type:
+            response_dict = response.json()
+        else:
+            print("⚠️ Non-JSON response:")
+            print(response.text)
+            return False, f"Non-JSON response: {response.status_code}"
 
         if str(response_dict.get("success")) == "1":
             return True, response_dict
         else:
             error_message = response_dict.get("message", "Unknown error")
             return False, error_message
+
     except Exception as e:
         print(f"❌ API call failed: {e}")
         return False, str(e)
+
 
 def call_get_api(path, params) -> tuple:
     url = f"{BASE_URL}/{path}"
