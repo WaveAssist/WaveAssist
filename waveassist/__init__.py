@@ -131,7 +131,7 @@ def fetch_data(key: str):
         return None
 
 
-def send_mail(subject: str, html_content: str, attachment_file=None):
+def send_email(subject: str, html_content: str, attachment_file=None):
     """Send an email with optional attachment file object via the WaveAssist backend."""
     if not _config.LOGIN_TOKEN or not _config.PROJECT_KEY:
         raise Exception("WaveAssist is not initialized. Please call waveassist.init(...) first.")
