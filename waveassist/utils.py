@@ -1,7 +1,6 @@
 import requests
 
-# BASE_URL ="https://api.waveassist.io"
-BASE_URL ="http://127.0.0.1:8080"
+BASE_URL ="https://api.waveassist.io"
 def call_post_api(path, body, files=None) -> tuple:
     url = f"{BASE_URL}/{path}"
 
