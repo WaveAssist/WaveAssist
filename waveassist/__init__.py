@@ -1,6 +1,6 @@
 import requests
 import pandas as pd
-from waveassist.utils import call_post_api, call_get_api
+from waveassist.utils import call_post_api, call_get_api, call_post_api_with_files
 from waveassist import _config
 import json
 import os
@@ -153,7 +153,7 @@ def send_email(subject: str, html_content: str, attachment_file=None):
             return False
 
     path = 'sdk/send_email/'
-    success, response = call_post_api(path, data, files=files)
+    success, response = call_post_api_with_files(path, data, files=files)
 
     if not success:
         print("❌ Error sending email:", response)
