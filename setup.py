@@ -10,7 +10,7 @@ with open(readme_path, encoding="utf-8") as f:
 
 setup(
     name="waveassist",
-    version="0.1.6",
+    version="0.1.7",
     author="WaveAssist",
     author_email="kakshil.shah@waveassist.io",
     description="WaveAssist Python SDK for storing and retrieving structured data",
@@ -21,7 +21,8 @@ setup(
     include_package_data=True,
     install_requires=[
         "pandas>=1.0.0",
-        "requests>=2.0.0"
+        "requests>=2.32.4",
+        "python-dotenv>=1.1.1"
     ],
     classifiers=[
         "Development Status :: 3 - Alpha",
