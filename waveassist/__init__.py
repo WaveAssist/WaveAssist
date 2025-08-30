@@ -16,7 +16,7 @@ def _conditionally_load_env():
         load_dotenv(dotenv_path=env_path, override=False)
 
 
-def init(token: str = None, project_key: str = None, environment_key: str = None) -> None:
+def init(token: str = None, project_key: str = None, environment_key: str = None, run_id: str = None) -> None:
     _conditionally_load_env()  # Load from .env if it exists
 
     # Resolve UID/token
@@ -41,6 +41,17 @@ def init(token: str = None, project_key: str = None, environment_key: str = None
         f"{resolved_project_key}_default" if resolved_project_key else None
     )
 
+    # Resolve run_id
+    resolved_run_id = (
+        run_id or
+        os.getenv("run_id") or
+        getattr(_config, "DEFAULT_RUN_ID", None)
+    )
+    
+    # Convert run_id to string if it exists
+    if resolved_run_id is not None:
+        resolved_run_id = str(resolved_run_id)
+
     # Validate critical keys
     if not resolved_token:
         raise ValueError("WaveAssist init failed: UID is missing. Pass explicitly or set uid in .env.")
@@ -51,21 +62,24 @@ def init(token: str = None, project_key: str = None, environment_key: str = None
     _config.LOGIN_TOKEN = resolved_token
     _config.PROJECT_KEY = resolved_project_key
     _config.ENVIRONMENT_KEY = resolved_env_key
+    _config.RUN_ID = resolved_run_id
 
 def set_worker_defaults(
     token: str = None,
     project_key: str = None,
-    environment_key: str = None
+    environment_key: str = None,
+    run_id: str = None
 ) -> None:
-    """Set default values for login token, project key, and environment key."""
+    """Set default values for login token, project key, environment key, and run_id."""
     _config.DEFAULT_LOGIN_TOKEN = token
     _config.DEFAULT_PROJECT_KEY = project_key
     _config.DEFAULT_ENVIRONMENT_KEY = environment_key
+    _config.DEFAULT_RUN_ID = run_id
 
 def set_default_environment_key(key: str) -> None:
     _config.DEFAULT_ENVIRONMENT_KEY = key
 
-def store_data(key: str, data):
+def store_data(key: str, data, run_based: bool = False):
     """Serialize the data based on its type and store it in the WaveAssist backend."""
     if not _config.LOGIN_TOKEN or not _config.PROJECT_KEY:
         raise Exception("WaveAssist is not initialized. Please call waveassist.init(...) first.")
@@ -86,8 +100,13 @@ def store_data(key: str, data):
         'data': serialized_data,
         'project_key': _config.PROJECT_KEY,
         'data_key': str(key),
-        'environment_key': _config.ENVIRONMENT_KEY
+        'environment_key': _config.ENVIRONMENT_KEY,
+        'run_based': "1" if run_based else "0"
     }
+
+    # Add run_id to payload if run_based is True and run_id is set
+    if run_based and _config.RUN_ID:
+        payload['run_id'] = str(_config.RUN_ID)
 
     path = 'data/set_data_for_key/'
     success, response = call_post_api(path, payload)
@@ -97,7 +116,7 @@ def store_data(key: str, data):
 
     return success
 
-def fetch_data(key: str):
+def fetch_data(key: str, run_based: bool = False):
     """Retrieve the data stored under `key` from the WaveAssist backend."""
     if not _config.LOGIN_TOKEN or not _config.PROJECT_KEY:
         raise Exception("WaveAssist is not initialized. Please call waveassist.init(...) first.")
@@ -106,8 +125,13 @@ def fetch_data(key: str):
         'uid': _config.LOGIN_TOKEN,
         'project_key': _config.PROJECT_KEY,
         'data_key': str(key),
-        'environment_key': _config.ENVIRONMENT_KEY
+        'environment_key': _config.ENVIRONMENT_KEY,
+        'run_based': "1" if run_based else "0"
     }
+
+    # Add run_id to params if run_based is True and run_id is set
+    if run_based and _config.RUN_ID:
+        params['run_id'] = str(_config.RUN_ID)
 
     path = 'data/fetch_data_for_key/'
     success, response = call_get_api(path, params)
