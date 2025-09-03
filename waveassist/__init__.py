@@ -185,3 +185,14 @@ def send_email(subject: str, html_content: str, attachment_file=None):
         print("✅ Email sent successfully.")
 
     return success
+
+def fetch_openrouter_credits():
+    """Fetch the credit balance for the current project."""
+    if not _config.LOGIN_TOKEN or not _config.PROJECT_KEY:
+        raise Exception("WaveAssist is not initialized. Please call waveassist.init(...) first.")
+    path = '/fetch_openrouter_credits/' + _config.LOGIN_TOKEN
+    success, response = call_get_api(path, {})
+    if not success:
+        print("❌ Error fetching credit balance:", response)
+        return {}
+    return response
