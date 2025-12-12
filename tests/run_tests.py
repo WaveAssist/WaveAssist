@@ -113,7 +113,7 @@ def test_init_from_dotenv():
     # Create a temporary .env file with final format
     env_path = Path(".env")
     env_path.write_text("""\
-uid='2fec42dd-492b-4294-8154-d33c3ccf'
+uid='xxxxxxxx-492b-4294-8154-xxxxxxxx'
 project_key='gitzoid_test'
 environment_key='default_gitzoid_test'
 """)
@@ -124,7 +124,7 @@ environment_key='default_gitzoid_test'
     # Should use .env values
     init()
 
-    assert _config.LOGIN_TOKEN == "2fec42dd-492b-4294-8154-d33c3ccf"
+    assert _config.LOGIN_TOKEN == "xxxxxxxx-492b-4294-8154-xxxxxxxx"
     assert _config.PROJECT_KEY == "gitzoid_test"
     assert _config.ENVIRONMENT_KEY == "default_gitzoid_test"
     print("✅ test_init_from_dotenv passed")

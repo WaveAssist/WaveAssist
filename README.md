@@ -6,13 +6,15 @@ WaveAssist SDK makes it simple to store and retrieve data in your automation wor
 
 ## ✨ Features
 
-* 🔐 One-line `init()` to connect with your [WaveAssist](https://waveassist.io) project
-* ⚙️ Automatically works on local and [WaveAssist Cloud](https://waveassist.io) (worker) environments
-* 📦 Store and retrieve data (DataFrames, JSON, strings)
-* 🧠 LLM-friendly function names (`init`, `store_data`, `fetch_data`)
-* 📁 Auto-serialization for common Python objects
-* 🖥️ Command-line interface for project management
-* ✅ Built for automation workflows, cron jobs, and AI pipelines
+- 🔐 One-line `init()` to connect with your [WaveAssist](https://waveassist.io) project
+- ⚙️ Automatically works on local and [WaveAssist Cloud](https://waveassist.io) (worker) environments
+- 📦 Store and retrieve data (DataFrames, JSON, strings)
+- 🧠 LLM-friendly function names (`init`, `store_data`, `fetch_data`)
+- 📁 Auto-serialization for common Python objects
+- 🤖 LLM integration with structured outputs via Instructor and OpenRouter
+- 💳 Credit management and automatic email notifications
+- 🖥️ Command-line interface for project management
+- ✅ Built for automation workflows, cron jobs, and AI pipelines
 
 ---
 
@@ -34,9 +36,18 @@ import waveassist
 # Option 1: Use no arguments (recommended)
 waveassist.init()
 
+# Option 2: With explicit parameters
+waveassist.init(
+    token="your-user-id",
+    project_key="your-project-key",
+    environment_key="your-env-key",  # optional
+    run_id="run-123",  # optional
+    check_credits=True  # optional: raises error if credits_available is "0"
+)
+
 # Will auto-resolve from:
 # 1. Explicit args (if passed)
-# 2. .env file (WA_UID, WA_PROJECT_KEY, WA_ENV_KEY)
+# 2. .env file (uid, project_key, environment_key)
 # 3. Worker-injected credentials (on [WaveAssist Cloud](https://waveassist.io))
 ```
 
@@ -93,6 +104,83 @@ result = waveassist.fetch_data("user_scores")
 
 ---
 
+### 5. Check Credits and Notify
+
+Check OpenRouter credits and automatically send email notifications if insufficient credits are available:
+
+```python
+# Check if you have enough credits for an operation
+has_credits = waveassist.check_credits_and_notify(
+    required_credits=10.5,
+    assistant_name="WavePredict"
+)
+
+if has_credits:
+    # Proceed with your operation
+    print("Credits available, proceeding...")
+else:
+    # Credits insufficient - email notification sent (max 3 times)
+    print("Insufficient credits, operation skipped")
+```
+
+**Features:**
+
+- Automatically checks OpenRouter credit balance
+- Sends email notification if credits are insufficient (max 3 times)
+- Resets notification count when credits become sufficient
+- Stores credit availability status for workflow control
+
+---
+
+### 6. Call LLM with Structured Outputs
+
+Use Instructor library to get structured responses from LLMs via OpenRouter:
+
+```python
+from pydantic import BaseModel
+
+# Define your response structure
+class UserInfo(BaseModel):
+    name: str
+    age: int
+    email: str
+
+# Call LLM with structured output
+result = waveassist.call_llm(
+    "Extract user info: John Doe, 30, john@example.com",
+    response_model=UserInfo,
+    model="gpt-4o"
+)
+
+print(result.name)  # "John Doe"
+print(result.age)    # 30
+print(result.email)  # "john@example.com"
+```
+
+**Setup:**
+
+1. Store your OpenRouter API key:
+
+```python
+waveassist.store_data('open_router_key', 'your_openrouter_api_key')
+```
+
+2. Use `call_llm()` with any Pydantic model for structured outputs
+
+**Advanced Usage:**
+
+```python
+result = waveassist.call_llm(
+    "Analyze this data...",
+    response_model=MyModel,
+    model="anthropic/claude-3-opus",
+    max_tokens=3000,
+    extra_body={"web_search_options": {"search_context_size": "medium"}}
+)
+```
+
+---
+
 ## 🖥️ Command Line Interface
 
 WaveAssist CLI comes bundled with the Python package. After installation, you can use the following commands:
@@ -141,10 +229,10 @@ python tests/run_tests.py
 
 ✅ Includes tests for:
 
-* String roundtrip
-* JSON/dict roundtrip
-* DataFrame roundtrip
-* Error if `init()` is not called
+- String roundtrip
+- JSON/dict roundtrip
+- DataFrame roundtrip
+- Error if `init()` is not called
 
 ---
 
@@ -153,8 +241,10 @@ python tests/run_tests.py
 ```
 WaveAssist/
 ├── waveassist/
-│   ├── __init__.py          # init(), store_data(), fetch_data()
+│   ├── __init__.py          # init(), store_data(), fetch_data(), check_credits_and_notify(), call_llm()
 │   ├── _config.py           # Global config vars
+│   ├── constants.py         # Constants and email templates
+│   ├── utils.py             # API utility functions
 │   └── ...
 ├── tests/
 │   └── run_tests.py         # Manual test runner
@@ -164,13 +254,15 @@ WaveAssist/
 
 ## 📌 Notes
 
-* Data is stored in your [WaveAssist backend](https://waveassist.io) (e.g. MongoDB) as serialized content
-* `store_data()` auto-detects the object type and serializes it (CSV/JSON/text)
-* `fetch_data()` deserializes it back to the right Python object
+- Data is stored in your [WaveAssist backend](https://waveassist.io) (e.g. MongoDB) as serialized content
+- `store_data()` auto-detects the object type and serializes it (CSV/JSON/text)
+- `fetch_data()` deserializes it back to the right Python object
 
 ---
 
-## 🧠 Example Use Case
+## 🧠 Example Use Cases
+
+### Basic Data Storage
 
 ```python
 import waveassist
@@ -188,6 +280,36 @@ pr = waveassist.fetch_data("latest_pr")
 print(pr["title"])
 ```
 
+### LLM Integration with Credit Management
+
+```python
+import waveassist
+from pydantic import BaseModel
+
+waveassist.init()
+
+# Store OpenRouter API key
+waveassist.store_data('open_router_key', 'your_api_key')
+
+# Check credits before expensive operation
+required_credits = 5.0
+if waveassist.check_credits_and_notify(required_credits, "MyAssistant"):
+    # Use LLM with structured output
+    class AnalysisResult(BaseModel):
+        summary: str
+        confidence: float
+        recommendations: list[str]
+
+    result = waveassist.call_llm(
+        "Analyze this data and provide recommendations...",
+        response_model=AnalysisResult,
+        model="gpt-4o"
+    )
+
+    # Store the structured result
+    waveassist.store_data("analysis_result", result.dict())
+```
+
 ---
 
 ## 🤝 Contributing
@@ -203,4 +325,3 @@ Need help or have feedback? Reach out at [connect@waveassist.io](mailto:connect@
 ---
 
 © 2025 [WaveAssist](https://waveassist.io)
-
