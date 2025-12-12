@@ -19,7 +19,7 @@ setup(
     url="https://github.com/waveassist/waveassist",
     packages=find_packages(exclude=["tests*", "*.tests"]),
     include_package_data=True,
-    install_requires=["pandas>=1.0.0", "requests>=2.32.4", "python-dotenv>=1.1.1", "instructor==1.13.0", "openai==2.11.0"],
+    install_requires=["pandas>=1.0.0", "requests>=2.32.4", "python-dotenv>=1.1.1", "instructor>=1.13.0", "openai>=2.11.0"],
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Developers",
