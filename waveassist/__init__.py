@@ -1,13 +1,23 @@
 import requests
 import pandas as pd
-from waveassist.utils import call_post_api, call_get_api, call_post_api_with_files
+from waveassist.utils import *
 from waveassist import _config
 import json
 import os
 from dotenv import load_dotenv
-
+from typing import Type, TypeVar
+from pydantic import BaseModel
 
 from pathlib import Path
+import instructor
+from openai import OpenAI
+from datetime import datetime
+from waveassist.constants import *
+
+
+# TypeVar for generic type hinting: T represents any Pydantic BaseModel subclass
+# This allows call_llm() to return the exact type of the response_model passed in
+T = TypeVar('T', bound=BaseModel)
 
 
 def _conditionally_load_env():
@@ -22,6 +32,7 @@ def init(
     project_key: str = None,
     environment_key: str = None,
     run_id: str = None,
+    check_credits: bool = False,
 ) -> None:
     _conditionally_load_env()  # Load from .env if it exists
 
@@ -71,6 +82,12 @@ def init(
     _config.PROJECT_KEY = resolved_project_key
     _config.ENVIRONMENT_KEY = resolved_env_key
     _config.RUN_ID = resolved_run_id
+
+    # Check credits if requested
+    if check_credits:
+        credits_available = str(fetch_data('credits_available') or "1")
+        if credits_available == "0":
+            raise ValueError('Credits not available, skipping this operation')
 
 
 def set_worker_defaults(
@@ -216,3 +233,169 @@ def fetch_openrouter_credits():
         print("❌ Error fetching credit balance:", response)
         return {}
     return response
+
+
+def check_credits_and_notify(
+    required_credits: float,
+    assistant_name: str,
+) -> bool:
+    """
+    Check OpenRouter credits and send an email notification if insufficient credits are available.
+    """
+    if not _config.LOGIN_TOKEN or not _config.PROJECT_KEY:
+        raise Exception(
+            "WaveAssist is not initialized. Please call waveassist.init(...) first."
+        )
+    
+    # Fetch current credit balance
+    credits_data = fetch_openrouter_credits()
+    credits_remaining = float(credits_data.get("limit_remaining", 0))
+    
+    # Check if sufficient credits are available
+    if required_credits > credits_remaining:
+        # Fetch current failure count
+        failure_count = int(fetch_data("failure_count") or 0)
+        
+        # Only send email if we haven't sent it 3 times already
+        if failure_count < 3:
+            # Generate email content using template from constants
+            html_content = get_email_template_credits_limit_reached(
+                assistant_name=assistant_name,
+                required_credits=required_credits,
+                credits_remaining=credits_remaining
+            )
+            
+            # Generate email subject
+            print(f"❌ Insufficient credits. Sending notification email.")
+            email_subject = f"{assistant_name} - Unavailable - Credit Limit Reached"
+            send_email(subject=email_subject, html_content=html_content)
+            
+            # Increment and store failure count
+            failure_count += 1
+            store_data('failure_count', str(failure_count))
+        else:
+            print(f"❌ Insufficient credits. Email notification limit reached (3 emails already sent).")
+        
+        store_data('credits_available', "0") # Set credits_available to 0 to prevent further operations
+        return False
+    else:
+        print(f"✅ Sufficient credits available. Required: {required_credits}, Remaining: {credits_remaining}")
+        store_data('credits_available', "1") # Set credits_available to 1 to allow further operations
+        store_data('failure_count', "0") # Reset failure count on success
+        return True
+
+
+def call_llm(
+    model: str,
+    prompt: str,
+    response_model: Type[T],
+    **kwargs
+) -> T:
+    """
+    Call an LLM using Instructor library and return structured responses.
+    
+    Note: This function requires models that support tool use/function calling.
+    If a model doesn't support tool use, it will fall back to JSON mode parsing.
+    
+    Args:
+        model: The model name to use (e.g., "gpt-4o", "anthropic/claude-3.5-sonnet")
+        prompt: The prompt to send to the LLM
+        response_model: A Pydantic model class that defines the structure of the response
+        **kwargs: Additional arguments to pass to the chat completion call (e.g., max_tokens, extra_body)
+    Returns:
+        An instance of the response_model with structured data from the LLM
+    Example:
+        from pydantic import BaseModel
+        class UserInfo(BaseModel):
+            name: str
+            age: int
+            email: str
+        # With additional parameters
+        result = waveassist.call_llm(
+            model="gpt-4o",
+            prompt="Extract user info: John Doe, 30, john@example.com",
+            response_model=UserInfo,
+            max_tokens=3000,
+            extra_body={"web_search_options": {"search_context_size": "medium"}})
+    """
+    if not _config.LOGIN_TOKEN or not _config.PROJECT_KEY:
+        raise Exception(
+            "WaveAssist is not initialized. Please call waveassist.init(...) first."
+        )
+    
+    # Fetch API key from WaveAssist data storage
+    api_key = fetch_data(OPENROUTER_API_STORED_DATA_KEY)
+    if not api_key:
+        raise ValueError(
+            "OpenRouter API key not found. Please store it using waveassist.store_data('open_router_key', 'your_api_key')"
+        )
+    
+    # Initialize OpenAI client with OpenRouter
+    client = OpenAI(
+        api_key=api_key,
+        base_url=OPENROUTER_URL
+    )
+    
+    # Try using Instructor first (requires tool use support)
+    try:
+        patched_client = instructor.patch(client)
+        # Set max_retries=1 unless explicitly overridden in kwargs
+        completion_kwargs = {**kwargs}
+        if "max_retries" not in completion_kwargs:
+            completion_kwargs["max_retries"] = 1
+        response = patched_client.chat.completions.create(
+            model=model,
+            response_model=response_model,
+            messages=[
+                {"role": "user", "content": prompt}
+            ],
+            **completion_kwargs
+        )
+        return response
+    except Exception as instructor_error:
+        error_str = str(instructor_error)
+        # Check if it's the tool use error
+        if "404" in error_str and ("tool use" in error_str.lower() or "No endpoints found" in error_str):
+            print(f"⚠️ Model '{model}' doesn't support tool use. Falling back to JSON mode...")
+            # Fallback: Use JSON mode for models that don't support tool use
+            try:
+                # Create a prompt that requests JSON output
+                json_prompt = create_json_prompt(prompt, response_model)
+                
+                # Call without instructor, using response_format="json_object" if supported
+                completion_kwargs = kwargs.copy()
+                # Try to use JSON mode if the model supports it
+                try:
+                    response = client.chat.completions.create(
+                        model=model,
+                        messages=[
+                            {"role": "user", "content": json_prompt}
+                        ],
+                        response_format={"type": "json_object"},
+                        **completion_kwargs
+                    )
+                except Exception:
+                    # If JSON mode not supported, try without it
+                    response = client.chat.completions.create(
+                        model=model,
+                        messages=[
+                            {"role": "user", "content": json_prompt}
+                        ],
+                        **completion_kwargs
+                    )
+                
+                # Parse and validate the JSON response
+                content = response.choices[0].message.content
+                return parse_json_response(content, response_model, model)
+            except Exception as fallback_error:
+                raise ValueError(
+                    f"Model '{model}' doesn't support tool use, "
+                    f"and JSON mode fallback also failed. "
+                    f"Please use a model that supports tool use, such as: "
+                    f"gpt-4o, gpt-4-turbo, anthropic/claude-3.5-sonnet, google/gemini-pro, etc. "
+                    f"Original error: {instructor_error}\nFallback error: {fallback_error}"
+                )
+        else:
+            # Re-raise other errors
+            print(f"❌ Error calling LLM: {instructor_error}")
+            raise
