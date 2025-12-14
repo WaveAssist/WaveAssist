@@ -364,7 +364,6 @@ def call_llm(
                 messages=[
                     {"role": "user", "content": json_prompt}
                 ],
-                response_format={"type": "json_object"},
                 **kwargs
             )
             # Parse and validate the JSON response
