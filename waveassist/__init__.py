@@ -356,9 +356,8 @@ def call_llm(
     except Exception as e:
         print(f"Running '{model}' with default mode...")
         try:
-            # Create a prompt that requests JSON output
+            # Create a prompt that requests text output, and parse it later.
             json_prompt = create_json_prompt(prompt, response_model)
-            # Call without instructor, using response_format="json_object" if supported
             response = client.chat.completions.create(
                 model=model,
                 messages=[
