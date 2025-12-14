@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from pathlib import Path
 import instructor
 from openai import OpenAI
+from openai import APIError, NotFoundError
 from datetime import datetime
 from waveassist.constants import *
 
@@ -277,6 +278,7 @@ def check_credits_and_notify(
             print(f"❌ Insufficient credits. Email notification limit reached (3 emails already sent).")
         
         store_data('credits_available', "0") # Set credits_available to 0 to prevent further operations
+        
         return False
     else:
         print(f"✅ Sufficient credits available. Required: {required_credits}, Remaining: {credits_remaining}")
@@ -312,7 +314,7 @@ def call_llm(
             email: str
         # With additional parameters
         result = waveassist.call_llm(
-            model="gpt-4o",
+            model="<model_name>",
             prompt="Extract user info: John Doe, 30, john@example.com",
             response_model=UserInfo,
             max_tokens=3000,
@@ -338,64 +340,39 @@ def call_llm(
     
     # Try using Instructor first (requires tool use support)
     try:
+        if "perplexity" in model.lower() or "deepseek" in model.lower():
+            raise Exception("This model does not support tool use, reverting to default mode.")
+
         patched_client = instructor.patch(client)
-        # Set max_retries=1 unless explicitly overridden in kwargs
-        completion_kwargs = {**kwargs}
-        if "max_retries" not in completion_kwargs:
-            completion_kwargs["max_retries"] = 1
         response = patched_client.chat.completions.create(
             model=model,
             response_model=response_model,
             messages=[
                 {"role": "user", "content": prompt}
             ],
-            **completion_kwargs
+            **kwargs
         )
         return response
-    except Exception as instructor_error:
-        error_str = str(instructor_error)
-        # Check if it's the tool use error
-        if "404" in error_str and ("tool use" in error_str.lower() or "No endpoints found" in error_str):
-            print(f"⚠️ Model '{model}' doesn't support tool use. Falling back to JSON mode...")
-            # Fallback: Use JSON mode for models that don't support tool use
-            try:
-                # Create a prompt that requests JSON output
-                json_prompt = create_json_prompt(prompt, response_model)
-                
-                # Call without instructor, using response_format="json_object" if supported
-                completion_kwargs = kwargs.copy()
-                # Try to use JSON mode if the model supports it
-                try:
-                    response = client.chat.completions.create(
-                        model=model,
-                        messages=[
-                            {"role": "user", "content": json_prompt}
-                        ],
-                        response_format={"type": "json_object"},
-                        **completion_kwargs
-                    )
-                except Exception:
-                    # If JSON mode not supported, try without it
-                    response = client.chat.completions.create(
-                        model=model,
-                        messages=[
-                            {"role": "user", "content": json_prompt}
-                        ],
-                        **completion_kwargs
-                    )
-                
-                # Parse and validate the JSON response
-                content = response.choices[0].message.content
-                return parse_json_response(content, response_model, model)
-            except Exception as fallback_error:
-                raise ValueError(
-                    f"Model '{model}' doesn't support tool use, "
-                    f"and JSON mode fallback also failed. "
-                    f"Please use a model that supports tool use, such as: "
-                    f"gpt-4o, gpt-4-turbo, anthropic/claude-3.5-sonnet, google/gemini-pro, etc. "
-                    f"Original error: {instructor_error}\nFallback error: {fallback_error}"
-                )
-        else:
-            # Re-raise other errors
-            print(f"❌ Error calling LLM: {instructor_error}")
-            raise
+    except Exception as e:
+        print(f"Running '{model}' with default mode...")
+        try:
+            # Create a prompt that requests JSON output
+            json_prompt = create_json_prompt(prompt, response_model)
+            # Call without instructor, using response_format="json_object" if supported
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "user", "content": json_prompt}
+                ],
+                response_format={"type": "json_object"},
+                **kwargs
+            )
+            # Parse and validate the JSON response
+            content = response.choices[0].message.content
+            return parse_json_response(content, response_model, model)
+        except Exception as fallback_error:
+            raise ValueError(
+                f"Model '{model}' doesn't support tool use, "
+                f"and JSON mode fallback also failed. "
+                f"Original error: {e}\nFallback error: {fallback_error}"
+            )

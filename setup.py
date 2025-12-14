@@ -10,7 +10,7 @@ with open(readme_path, encoding="utf-8") as f:
 
 setup(
     name="waveassist",
-    version="0.3.0",
+    version="0.3.1",
     author="WaveAssist",
     author_email="kakshil.shah@waveassist.io",
     description="WaveAssist Python SDK for storing and retrieving structured data, LLM integration, and credit management",
