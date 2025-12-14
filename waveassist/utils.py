@@ -196,7 +196,7 @@ def create_json_prompt(prompt: str, response_model: Type[BaseModel]) -> str:
     schema = response_model.model_json_schema()
     return f"""{prompt}
 
-Please respond with a valid JSON object matching this schema:
+Please respond with a valid JSON object matching exactly this schema:
 {json.dumps(schema, indent=2)}
 
-Return ONLY the JSON object, no other text, return JSON now"""
+Return ONLY the JSON object, no other text, return JSON now: """
