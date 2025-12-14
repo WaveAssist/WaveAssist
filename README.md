@@ -147,9 +147,9 @@ class UserInfo(BaseModel):
 
 # Call LLM with structured output
 result = waveassist.call_llm(
-    "Extract user info: John Doe, 30, john@example.com",
-    response_model=UserInfo,
-    model="gpt-4o"
+    model="gpt-4o",
+    prompt="Extract user info: John Doe, 30, john@example.com",
+    response_model=UserInfo
 )
 
 print(result.name)  # "John Doe"
@@ -171,9 +171,9 @@ waveassist.store_data('open_router_key', 'your_openrouter_api_key')
 
 ```python
 result = waveassist.call_llm(
-    "Analyze this data...",
-    response_model=MyModel,
     model="anthropic/claude-3-opus",
+    prompt="Analyze this data...",
+    response_model=MyModel,
     max_tokens=3000,
     extra_body={"web_search_options": {"search_context_size": "medium"}}
 )
@@ -301,9 +301,9 @@ if waveassist.check_credits_and_notify(required_credits, "MyAssistant"):
         recommendations: list[str]
 
     result = waveassist.call_llm(
-        "Analyze this data and provide recommendations...",
-        response_model=AnalysisResult,
-        model="gpt-4o"
+        model="gpt-4o",
+        prompt="Analyze this data and provide recommendations...",
+        response_model=AnalysisResult
     )
 
     # Store the structured result
