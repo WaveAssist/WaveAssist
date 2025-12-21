@@ -336,11 +336,21 @@ def call_llm(
     # Create prompt with JSON structure instructions
     json_prompt = create_json_prompt(prompt, response_model)
     
+    # Remove response_format from kwargs to avoid duplicate
+    kwargs.pop("response_format", None)
+    
+    # Check if model supports JSON format
+    response_format = {"type": "json_object"}
+    
+    # Check if model is in the unsupported JSON models array
+    if any(x in model.lower() for x in UNSUPPORTED_JSON_MODELS_ARRAY):
+        response_format = None 
+    
     # Make API call with JSON response format
     response = client.chat.completions.create(
         model=model,
         messages=[{"role": "user", "content": json_prompt}],
-        response_format={"type": "json_object"},
+        response_format=response_format,
         **kwargs
     )
     
