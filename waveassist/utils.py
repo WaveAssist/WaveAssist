@@ -1,7 +1,8 @@
 import requests
 import json
+import re
 from datetime import datetime
-from typing import Type, TypeVar
+from typing import Type, TypeVar, get_origin, get_args, Any, Union
 from pydantic import BaseModel
 from waveassist.constants import *
 
@@ -123,32 +124,198 @@ def get_email_template_credits_limit_reached(
         """
 
 
-def extract_json_from_content(content: str) -> str:
+def _get_type_name(annotation: Any) -> str:
+    """Get a clean type name from a type annotation."""
+    if annotation is None:
+        return "null"
+    
+    origin = get_origin(annotation)
+    
+    # Handle Optional types (Union[X, None])
+    if origin is Union:
+        args = get_args(annotation)
+        non_none_args = [a for a in args if a is not type(None)]
+        if len(non_none_args) == 1:
+            return _get_type_name(non_none_args[0])
+        return " | ".join(_get_type_name(a) for a in non_none_args)
+    
+    # Handle List, Dict, etc.
+    if origin is list:
+        args = get_args(annotation)
+        if args:
+            return f"list[{_get_type_name(args[0])}]"
+        return "list"
+    
+    if origin is dict:
+        args = get_args(annotation)
+        if args and len(args) == 2:
+            return f"dict[{_get_type_name(args[0])}, {_get_type_name(args[1])}]"
+        return "dict"
+    
+    # Handle Pydantic BaseModel (nested models)
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return annotation.__name__
+    
+    # Handle basic types
+    if hasattr(annotation, '__name__'):
+        return annotation.__name__
+    
+    return str(annotation)
+
+
+def _generate_template_value(field_annotation: Any, field_description: str | None) -> Any:
+    """Generate a template value for a field, handling nested models."""
+    # Check if it's a Pydantic model (nested)
+    origin = get_origin(field_annotation)
+    
+    # Handle Optional types
+    if origin is Union:
+        args = get_args(field_annotation)
+        non_none_args = [a for a in args if a is not type(None)]
+        if non_none_args:
+            return _generate_template_value(non_none_args[0], field_description)
+    
+    # Handle List of Pydantic models
+    if origin is list:
+        args = get_args(field_annotation)
+        if args and isinstance(args[0], type) and issubclass(args[0], BaseModel):
+            return [generate_json_template_dict(args[0])]
+        elif args:
+            return [f"<{_get_type_name(args[0])}>"]
+        return ["<item>"]
+    
+    # Handle nested Pydantic model
+    if isinstance(field_annotation, type) and issubclass(field_annotation, BaseModel):
+        return generate_json_template_dict(field_annotation)
+    
+    # Use description if available, otherwise type name
+    if field_description:
+        return field_description
+    return f"<{_get_type_name(field_annotation)}>"
+
+
+def generate_json_template_dict(model: Type[BaseModel]) -> dict:
+    """Generate a template dictionary showing the structure and descriptions."""
+    template = {}
+    for name, field in model.model_fields.items():
+        template[name] = _generate_template_value(field.annotation, field.description)
+    return template
+
+
+def generate_json_template(model: Type[BaseModel]) -> str:
+    """Generate a clean JSON string showing the structure and descriptions."""
+    return json.dumps(generate_json_template_dict(model), indent=2)
+
+
+def extract_json_from_content(content: str) -> dict:
     """
-    Extract JSON content from a string, handling markdown code blocks.
+    Extract and parse JSON from content using multiple strategies.
     
     Args:
-        content: Raw content that may contain JSON wrapped in markdown code blocks
+        content: Raw content that may contain JSON
         
     Returns:
-        Extracted JSON string
+        Parsed JSON as a dictionary
+        
+    Raises:
+        ValueError: If no valid JSON could be extracted
     """
+    if not content:
+        raise ValueError("Empty content received")
+    
     content = content.strip()
-    # Try to extract JSON if it's wrapped in markdown code blocks
-    if "```json" in content:
-        content = content.split("```json")[1].split("```")[0].strip()
-    elif "```" in content:
-        content = content.split("```")[1].split("```")[0].strip()
-    return content
+    
+    # Strategy 1: Try parsing directly (content is pure JSON)
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        pass
+    
+    # Strategy 2: Extract from ```json code blocks
+    json_block_match = re.search(r'```json\s*([\s\S]*?)\s*```', content)
+    if json_block_match:
+        try:
+            return json.loads(json_block_match.group(1).strip())
+        except json.JSONDecodeError:
+            pass
+    
+    # Strategy 3: Extract from generic ``` code blocks
+    code_block_match = re.search(r'```\s*([\s\S]*?)\s*```', content)
+    if code_block_match:
+        try:
+            return json.loads(code_block_match.group(1).strip())
+        except json.JSONDecodeError:
+            pass
+    
+    # Strategy 4: Find JSON object pattern { ... }
+    json_object_match = re.search(r'\{[\s\S]*\}', content)
+    if json_object_match:
+        try:
+            return json.loads(json_object_match.group(0))
+        except json.JSONDecodeError:
+            pass
+    
+    # Strategy 5: Find JSON array pattern [ ... ]
+    json_array_match = re.search(r'\[[\s\S]*\]', content)
+    if json_array_match:
+        try:
+            return json.loads(json_array_match.group(0))
+        except json.JSONDecodeError:
+            pass
+    
+    raise ValueError(f"Could not extract valid JSON from content: {content[:200]}...")
 
 
-def parse_json_response(
-    content: str,
-    response_model: Type[T],
-    model: str
-) -> T:
+def soft_parse(model_class: Type[T], raw_data: dict) -> T:
     """
-    Parse JSON content and validate it against a Pydantic model.
+    Parse data into a Pydantic model leniently.
+    
+    - Ignores extra fields not in the model
+    - Allows missing optional fields (they become None)
+    - Attempts type coercion where possible
+    - Falls back to model_construct if validation fails (e.g., missing required fields)
+    - Fills in missing fields with None or their default values
+    
+    This ensures LLM responses are never wasted - we return whatever data was gathered.
+    
+    Args:
+        model_class: Pydantic model class to parse into
+        raw_data: Raw dictionary data from LLM
+        
+    Returns:
+        Instance of the model class (may have None for missing required fields)
+    """
+    # Filter to only valid keys
+    valid_keys = set(model_class.model_fields.keys())
+    filtered_data = {k: v for k, v in raw_data.items() if k in valid_keys}
+    
+    # 1. Try normal validation first (handles type coercion, defaults, etc.)
+    try:
+        return model_class.model_validate(filtered_data)
+    except Exception:
+        pass
+    
+    # 2. Safety Fallback: "Just give me what you found"
+    # model_construct bypasses validation - returns whatever data is available
+    obj = model_class.model_construct(**filtered_data)
+    
+    # 3. Fill in the gaps: Ensure every field exists
+    from pydantic_core import PydanticUndefined
+    for field_name in valid_keys:
+        if not hasattr(obj, field_name):
+            # Set to the field's default if it has one, otherwise None
+            field_info = model_class.model_fields[field_name]
+            default_value = field_info.default
+            if default_value is PydanticUndefined:
+                default_value = None
+            setattr(obj, field_name, default_value)
+    
+    return obj
+
+
+def parse_json_response(content: str, response_model: Type[T], model: str) -> T:
+    """
+    Parse JSON content and validate it against a Pydantic model with soft parsing.
     
     Args:
         content: JSON string to parse (may contain markdown code blocks)
@@ -159,22 +326,18 @@ def parse_json_response(
         Validated instance of response_model
         
     Raises:
-        ValueError: If JSON parsing or validation fails
+        ValueError: If JSON extraction or parsing fails
     """
     try:
-        # Extract JSON from markdown if needed
-        json_content = extract_json_from_content(content)
-        # Parse JSON
-        parsed_data = json.loads(json_content)
-        # Validate with Pydantic
-        return response_model(**parsed_data)
-    except json.JSONDecodeError as e:
-        content_preview = content[:200] if content else "No content received"
-        raise ValueError(
-            f"Failed to parse JSON response from model '{model}'. "
-            f"The model may not support structured outputs. "
-            f"Error: {e}\nResponse content: {content_preview}"
-        )
+        # Extract JSON using multiple strategies
+        parsed_data = extract_json_from_content(content)
+
+        # Soft parse with lenient validation
+        return soft_parse(response_model, parsed_data)
+        
+    except ValueError as e:
+        # Re-raise ValueError from extract_json_from_content
+        raise ValueError(f"Failed to parse response from model '{model}': {e}")
     except Exception as e:
         raise ValueError(
             f"Failed to validate response from model '{model}' against {response_model.__name__}. "
@@ -184,19 +347,19 @@ def parse_json_response(
 
 def create_json_prompt(prompt: str, response_model: Type[BaseModel]) -> str:
     """
-    Create a prompt that requests JSON output matching a Pydantic schema.
+    Create a prompt that requests JSON output matching a Pydantic model structure.
     
     Args:
         prompt: Original user prompt
-        response_model: Pydantic model class to generate schema from
+        response_model: Pydantic model class to generate template from
         
     Returns:
-        Enhanced prompt with JSON schema instructions
+        Enhanced prompt with JSON structure instructions
     """
-    schema = response_model.model_json_schema()
+    template = generate_json_template(response_model)
     return f"""{prompt}
-
-Please respond with a valid JSON object matching exactly this schema:
-{json.dumps(schema, indent=2)}
-
-Return ONLY the JSON object, no other text, return JSON now: """
+    
+    Respond with a JSON object following this structure:
+    {template}
+    
+    Return ONLY the JSON object, no explanations or other text. Return JSON now:"""

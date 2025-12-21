@@ -221,18 +221,28 @@ Display CLI version and environment information.
 
 ## 🧪 Running Tests
 
-If you’re not using `pytest`, just run the test script directly:
+Run the test files directly:
 
 ```bash
-python tests/run_tests.py
+# Core SDK tests (init, store_data, fetch_data)
+python tests/test_core.py
+
+# JSON generation tests (create_json_prompt, generate_json_template)
+python tests/test_json_generate.py
+
+# JSON extraction/parsing tests (extract_json_from_content, soft_parse, parse_json_response)
+python tests/test_json_extract.py
 ```
 
 ✅ Includes tests for:
 
-- String roundtrip
-- JSON/dict roundtrip
-- DataFrame roundtrip
-- Error if `init()` is not called
+- String, JSON, and DataFrame roundtrips
+- Error handling when `init()` is not called
+- Environment variable and `.env` file resolution
+- JSON template generation for Pydantic models
+- JSON extraction from various formats (pure JSON, markdown code blocks, embedded text)
+- Soft parsing with missing required fields (safety fallback for LLM responses)
+- Type coercion and nested model handling
 
 ---
 
@@ -244,10 +254,12 @@ WaveAssist/
 │   ├── __init__.py          # init(), store_data(), fetch_data(), check_credits_and_notify(), call_llm()
 │   ├── _config.py           # Global config vars
 │   ├── constants.py         # Constants and email templates
-│   ├── utils.py             # API utility functions
-│   └── ...
+│   ├── utils.py             # API utilities, JSON parsing, soft_parse
+│   └── cli.py               # Command-line interface
 ├── tests/
-│   └── run_tests.py         # Manual test runner
+│   ├── test_core.py         # Core SDK tests (init, store, fetch)
+│   ├── test_json_generate.py # JSON template generation tests
+│   └── test_json_extract.py  # JSON extraction/parsing tests
 ```
 
 ---
