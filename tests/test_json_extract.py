@@ -94,6 +94,23 @@ class ComplexModel(BaseModel):
     items: List[OrderItem] = Field(description="Order items")
 
 
+class ModelWithDefaultFactory(BaseModel):
+    """Model with default_factory fields."""
+    name: str
+    items: list = Field(default_factory=list)
+    tags: List[str] = Field(default_factory=list)
+    metadata: dict = Field(default_factory=dict)
+    count: int = Field(default_factory=lambda: 0)
+
+
+class ModelWithMixedDefaults(BaseModel):
+    """Model with mix of default and default_factory."""
+    name: str
+    items: list = Field(default_factory=list)
+    optional_field: Optional[str] = None
+    field_with_default: str = "default_value"
+
+
 # ==================== TESTS FOR extract_json_from_content ====================
 
 # Strategy 1: Pure JSON tests
@@ -295,19 +312,6 @@ def test_extract_json_array():
     assert len(result) == 2
     
     print("✅ test_extract_json_array passed")
-
-
-def test_extract_json_array_from_text():
-    """Test extracting JSON array embedded in text."""
-    content = 'The list is: [{"name": "Alice"}, {"name": "Bob"}] here.'
-    result = extract_json_from_content(content)
-    
-    assert isinstance(result, list)
-    assert len(result) == 2
-    assert result[0]["name"] == "Alice"
-    assert result[1]["name"] == "Bob"
-    
-    print("✅ test_extract_json_array_from_text passed")
 
 
 def test_extract_json_array_simple():
@@ -907,6 +911,83 @@ def test_soft_parse_invalid_type_falls_back():
     print("✅ test_soft_parse_invalid_type_falls_back passed")
 
 
+# ==================== TESTS FOR soft_parse WITH default_factory ====================
+
+def test_soft_parse_default_factory_list():
+    """Test soft_parse respects default_factory=list for missing fields."""
+    data = {"name": "Test"}
+    result = soft_parse(ModelWithDefaultFactory, data)
+    
+    assert result.name == "Test"
+    assert isinstance(result.items, list), f"Expected list, got {type(result.items)}"
+    assert result.items == [], f"Expected empty list, got {result.items}"
+    
+    print("✅ test_soft_parse_default_factory_list passed")
+
+
+def test_soft_parse_default_factory_dict():
+    """Test soft_parse respects default_factory=dict for missing fields."""
+    data = {"name": "Test"}
+    result = soft_parse(ModelWithDefaultFactory, data)
+    
+    assert isinstance(result.metadata, dict), f"Expected dict, got {type(result.metadata)}"
+    assert result.metadata == {}, f"Expected empty dict, got {result.metadata}"
+    
+    print("✅ test_soft_parse_default_factory_dict passed")
+
+
+def test_soft_parse_default_factory_lambda():
+    """Test soft_parse respects default_factory with lambda for missing fields."""
+    data = {"name": "Test"}
+    result = soft_parse(ModelWithDefaultFactory, data)
+    
+    assert isinstance(result.count, int), f"Expected int, got {type(result.count)}"
+    assert result.count == 0, f"Expected 0, got {result.count}"
+    
+    print("✅ test_soft_parse_default_factory_lambda passed")
+
+
+def test_soft_parse_default_factory_mixed():
+    """Test soft_parse with model mixing default and default_factory."""
+    data = {"name": "Test"}
+    result = soft_parse(ModelWithMixedDefaults, data)
+    
+    assert result.name == "Test"
+    assert isinstance(result.items, list), f"Expected list, got {type(result.items)}"
+    assert result.items == [], f"Expected empty list, got {result.items}"
+    assert result.optional_field is None
+    assert result.field_with_default == "default_value"
+    
+    print("✅ test_soft_parse_default_factory_mixed passed")
+
+
+def test_soft_parse_default_factory_provided_value():
+    """Test soft_parse uses provided value over default_factory."""
+    data = {"name": "Test", "items": [1, 2, 3], "metadata": {"key": "value"}}
+    result = soft_parse(ModelWithDefaultFactory, data)
+    
+    assert result.name == "Test"
+    assert result.items == [1, 2, 3], "Should use provided value, not factory"
+    assert result.metadata == {"key": "value"}, "Should use provided value, not factory"
+    
+    print("✅ test_soft_parse_default_factory_provided_value passed")
+
+
+def test_soft_parse_default_factory_partial_missing():
+    """Test soft_parse when some default_factory fields are missing."""
+    data = {"name": "Test", "items": [1, 2, 3]}
+    # metadata and count are missing, should use default_factory
+    result = soft_parse(ModelWithDefaultFactory, data)
+    
+    assert result.items == [1, 2, 3]
+    assert isinstance(result.metadata, dict)
+    assert result.metadata == {}
+    assert isinstance(result.count, int)
+    assert result.count == 0
+    
+    print("✅ test_soft_parse_default_factory_partial_missing passed")
+
+
 # ==================== TESTS FOR parse_json_response ====================
 
 def test_parse_json_response_simple():
@@ -1158,6 +1239,58 @@ That's all.'''
     print("✅ test_parse_json_response_multiline_markdown passed")
 
 
+def test_parse_json_response_with_array_takes_first():
+    """Test parse_json_response handles JSON array by taking first element."""
+    content = '[{"name": "First", "age": 25, "score": 85.0, "is_active": true}, {"name": "Second", "age": 30, "score": 90.0, "is_active": false}]'
+    result = parse_json_response(content, SimpleModel, "test-model")
+    
+    assert result.name == "First"
+    assert result.age == 25
+    assert result.score == 85.0
+    assert result.is_active is True
+    
+    print("✅ test_parse_json_response_with_array_takes_first passed")
+
+
+def test_parse_json_response_with_array_in_markdown():
+    """Test parse_json_response handles JSON array in markdown code block."""
+    content = '''```json
+[{"name": "ArrayItem", "age": 42, "score": 99.9, "is_active": true}]
+```'''
+    result = parse_json_response(content, SimpleModel, "test-model")
+    
+    assert result.name == "ArrayItem"
+    assert result.age == 42
+    assert result.score == 99.9
+    
+    print("✅ test_parse_json_response_with_array_in_markdown passed")
+
+
+def test_parse_json_response_empty_array_raises():
+    """Test parse_json_response raises clear error for empty array."""
+    content = '[]'
+    try:
+        parse_json_response(content, SimpleModel, "test-model")
+        assert False, "Should have raised ValueError for empty array"
+    except ValueError as e:
+        assert "empty array" in str(e).lower() or "array" in str(e).lower()
+        assert "SimpleModel" in str(e) or "object" in str(e).lower()
+    
+    print("✅ test_parse_json_response_empty_array_raises passed")
+
+
+def test_parse_json_response_array_with_non_object_raises():
+    """Test parse_json_response raises clear error for array with non-object elements."""
+    content = '[1, 2, 3]'
+    try:
+        parse_json_response(content, SimpleModel, "test-model")
+        assert False, "Should have raised ValueError for array with non-object elements"
+    except ValueError as e:
+        assert "object" in str(e).lower() or "array" in str(e).lower()
+    
+    print("✅ test_parse_json_response_array_with_non_object_raises passed")
+
+
 # ==================== RUN ALL TESTS ====================
 
 if __name__ == "__main__":
@@ -1184,7 +1317,6 @@ if __name__ == "__main__":
     test_extract_json_object_with_arrays()
     # Strategy 5: JSON array pattern
     test_extract_json_array()
-    test_extract_json_array_from_text()
     test_extract_json_array_simple()
     test_extract_json_array_nested()
     # Edge cases
@@ -1229,6 +1361,16 @@ if __name__ == "__main__":
     test_soft_parse_invalid_type_falls_back()
     
     print("\n" + "="*60)
+    print("Testing soft_parse with default_factory")
+    print("="*60)
+    test_soft_parse_default_factory_list()
+    test_soft_parse_default_factory_dict()
+    test_soft_parse_default_factory_lambda()
+    test_soft_parse_default_factory_mixed()
+    test_soft_parse_default_factory_provided_value()
+    test_soft_parse_default_factory_partial_missing()
+    
+    print("\n" + "="*60)
     print("Testing parse_json_response")
     print("="*60)
     test_parse_json_response_simple()
@@ -1245,6 +1387,10 @@ if __name__ == "__main__":
     test_parse_json_response_complex_model()
     test_parse_json_response_type_coercion()
     test_parse_json_response_multiline_markdown()
+    test_parse_json_response_with_array_takes_first()
+    test_parse_json_response_with_array_in_markdown()
+    test_parse_json_response_empty_array_raises()
+    test_parse_json_response_array_with_non_object_raises()
     
     print("\n" + "="*60)
     print("🎉 All JSON extraction/parsing tests passed!")

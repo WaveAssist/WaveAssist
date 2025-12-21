@@ -207,7 +207,54 @@ def generate_json_template(model: Type[BaseModel]) -> str:
     return json.dumps(generate_json_template_dict(model), indent=2)
 
 
-def extract_json_from_content(content: str) -> dict:
+def _find_balanced_json(content: str, start_char: str, end_char: str) -> str | None:
+    """
+    Find a balanced JSON object or array starting from the first occurrence of start_char.
+    
+    Args:
+        content: Content to search in
+        start_char: Opening character ('{' or '[')
+        end_char: Closing character ('}' or ']')
+        
+    Returns:
+        The matched JSON string, or None if not found
+    """
+    start_idx = content.find(start_char)
+    if start_idx == -1:
+        return None
+    
+    depth = 0
+    in_string = False
+    escape_next = False
+    
+    for i in range(start_idx, len(content)):
+        char = content[i]
+        
+        if escape_next:
+            escape_next = False
+            continue
+        
+        if char == '\\':
+            escape_next = True
+            continue
+        
+        if char == '"' and not escape_next:
+            in_string = not in_string
+            continue
+        
+        if not in_string:
+            if char == start_char:
+                depth += 1
+            elif char == end_char:
+                depth -= 1
+                if depth == 0:
+                    # Found matching closing brace/bracket
+                    return content[start_idx:i + 1]
+    
+    return None
+
+
+def extract_json_from_content(content: str) -> Union[dict, list]:
     """
     Extract and parse JSON from content using multiple strategies.
     
@@ -215,7 +262,7 @@ def extract_json_from_content(content: str) -> dict:
         content: Raw content that may contain JSON
         
     Returns:
-        Parsed JSON as a dictionary
+        Parsed JSON as a dictionary or list
         
     Raises:
         ValueError: If no valid JSON could be extracted
@@ -247,19 +294,19 @@ def extract_json_from_content(content: str) -> dict:
         except json.JSONDecodeError:
             pass
     
-    # Strategy 4: Find JSON object pattern { ... }
-    json_object_match = re.search(r'\{[\s\S]*\}', content)
-    if json_object_match:
+    # Strategy 4: Find JSON object pattern { ... } with balanced matching
+    json_object_str = _find_balanced_json(content, '{', '}')
+    if json_object_str:
         try:
-            return json.loads(json_object_match.group(0))
+            return json.loads(json_object_str)
         except json.JSONDecodeError:
             pass
     
-    # Strategy 5: Find JSON array pattern [ ... ]
-    json_array_match = re.search(r'\[[\s\S]*\]', content)
-    if json_array_match:
+    # Strategy 5: Find JSON array pattern [ ... ] with balanced matching
+    json_array_str = _find_balanced_json(content, '[', ']')
+    if json_array_str:
         try:
-            return json.loads(json_array_match.group(0))
+            return json.loads(json_array_str)
         except json.JSONDecodeError:
             pass
     
@@ -306,8 +353,16 @@ def soft_parse(model_class: Type[T], raw_data: dict) -> T:
             # Set to the field's default if it has one, otherwise None
             field_info = model_class.model_fields[field_name]
             default_value = field_info.default
+            
+            # Check for default_factory if default is undefined
             if default_value is PydanticUndefined:
-                default_value = None
+                # Check if there's a default_factory to call
+                default_factory = getattr(field_info, 'default_factory', None)
+                if default_factory is not None and callable(default_factory):
+                    default_value = default_factory()
+                else:
+                    default_value = None
+            
             setattr(obj, field_name, default_value)
     
     return obj
@@ -331,6 +386,22 @@ def parse_json_response(content: str, response_model: Type[T], model: str) -> T:
     try:
         # Extract JSON using multiple strategies
         parsed_data = extract_json_from_content(content)
+
+        # If the extracted JSON is an array, take the first element
+        # (since the model expects an object/dict)
+        if isinstance(parsed_data, list):
+            if len(parsed_data) == 0:
+                raise ValueError(
+                    f"Expected JSON object but got empty array. "
+                    f"The model '{response_model.__name__}' requires an object, not an array."
+                )
+            parsed_data = parsed_data[0]
+            # Ensure it's a dict after extracting from array
+            if not isinstance(parsed_data, dict):
+                raise ValueError(
+                    f"Expected JSON object but got array with non-object element. "
+                    f"The model '{response_model.__name__}' requires an object."
+                )
 
         # Soft parse with lenient validation
         return soft_parse(response_model, parsed_data)
