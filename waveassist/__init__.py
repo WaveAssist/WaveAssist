@@ -9,9 +9,7 @@ from typing import Type, TypeVar
 from pydantic import BaseModel
 
 from pathlib import Path
-import instructor
 from openai import OpenAI
-from openai import APIError, NotFoundError
 from datetime import datetime
 from waveassist.constants import *
 
@@ -294,11 +292,8 @@ def call_llm(
     **kwargs
 ) -> T:
     """
-    Call an LLM using Instructor library and return structured responses.
-    
-    Note: This function requires models that support tool use/function calling.
-    If a model doesn't support tool use, it will fall back to JSON mode parsing.
-    
+    Call an LLM via OpenRouter and return structured responses.
+    Uses JSON response format and soft parsing for reliable structured output.
     Args:
         model: The model name to use (e.g., "gpt-4o", "anthropic/claude-3.5-sonnet")
         prompt: The prompt to send to the LLM
@@ -338,39 +333,27 @@ def call_llm(
         base_url=OPENROUTER_URL
     )
     
-    # Try using Instructor first (requires tool use support)
-    try:
-        if "perplexity" in model.lower() or "deepseek" in model.lower():
-            raise Exception("This model does not support tool use, reverting to default mode.")
-
-        patched_client = instructor.patch(client)
-        response = patched_client.chat.completions.create(
-            model=model,
-            response_model=response_model,
-            messages=[
-                {"role": "user", "content": prompt}
-            ],
-            **kwargs
-        )
-        return response
-    except Exception as e:
-        print(f"Running '{model}' with default mode...")
-        try:
-            # Create a prompt that requests text output, and parse it later.
-            json_prompt = create_json_prompt(prompt, response_model)
-            response = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "user", "content": json_prompt}
-                ],
-                **kwargs
-            )
-            # Parse and validate the JSON response
-            content = response.choices[0].message.content
-            return parse_json_response(content, response_model, model)
-        except Exception as fallback_error:
-            raise ValueError(
-                f"Model '{model}' doesn't support tool use, "
-                f"and JSON mode fallback also failed. "
-                f"Original error: {e}\nFallback error: {fallback_error}"
-            )
+    # Create prompt with JSON structure instructions
+    json_prompt = create_json_prompt(prompt, response_model)
+    
+    # Remove response_format from kwargs to avoid duplicate
+    kwargs.pop("response_format", None)
+    
+    # Check if model supports JSON format
+    response_format = {"type": "json_object"}
+    
+    # Check if model is in the unsupported JSON models array
+    if any(x in model.lower() for x in UNSUPPORTED_JSON_MODELS_ARRAY):
+        response_format = None 
+    
+    # Make API call with JSON response format
+    response = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": json_prompt}],
+        response_format=response_format,
+        **kwargs
+    )
+    
+    # Extract and parse the response
+    content = response.choices[0].message.content
+    return parse_json_response(content, response_model, model)

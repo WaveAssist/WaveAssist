@@ -1,0 +1,28 @@
+# WaveAssist SDK & CLI - Cursor Rules
+
+## Overview
+
+Python SDK/CLI for storing/retrieving structured data in automation workflows. Features: LLM integration (OpenRouter), credit management, auto-serialization for DataFrames/JSON/strings.
+
+## Tech Stack
+
+Python 3.10+, pandas, requests, python-dotenv, pydantic, openai
+
+## Core Functions (`__init__.py`)
+
+- `init()` - Initialize with token, project_key, environment_key, run_id (from `.env` or env vars)
+- `store_data()` - Store DataFrames/JSON/strings (auto-serialization)
+- `fetch_data()` - Retrieve data (auto-deserialization)
+- `check_credits_and_notify()` - Check OpenRouter credits, send email notifications
+- `call_llm()` - Call LLMs via OpenRouter with structured Pydantic outputs
+
+## Key Notes
+
+- Always check `init()` called before API operations
+- `.env` for local config (uid, project_key, environment_key) - should be gitignored
+- LLM requires OpenRouter key: `store_data('open_router_key', 'key')`
+- API: `https://api.waveassist.io`, Dashboard: `https://app.waveassist.io`
+- Some models don't support JSON format (see `UNSUPPORTED_JSON_MODELS_ARRAY` in constants)
+- Follow PEP 8, use type hints, clear error messages
+- Tests: `python tests/test_*.py`
+- CLI: `waveassist login|push|pull|version`
