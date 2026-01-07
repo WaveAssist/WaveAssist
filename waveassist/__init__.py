@@ -248,6 +248,11 @@ def check_credits_and_notify(
     
     # Fetch current credit balance
     credits_data = fetch_openrouter_credits()
+    
+    # Check if the API call failed (empty dict or missing key)
+    if not credits_data or "limit_remaining" not in credits_data:
+        raise Exception("Failed to fetch OpenRouter credits. Unable to determine credit balance.")
+    
     credits_remaining = float(credits_data.get("limit_remaining", 0))
     
     # Check if sufficient credits are available
