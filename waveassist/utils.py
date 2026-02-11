@@ -1,12 +1,23 @@
 import requests
 import json
 import re
+import time
 from datetime import datetime
 from typing import Type, TypeVar, get_origin, get_args, Any, Union
 from pydantic import BaseModel
 from waveassist.constants import *
 
 T = TypeVar('T', bound=BaseModel)
+
+
+class LLMCallError(Exception):
+    """Raised when the LLM API call itself fails (network, HTTP errors, timeouts)."""
+    pass
+
+
+class LLMFormatError(Exception):
+    """Raised when the LLM call succeeded but JSON extraction/validation failed."""
+    pass
 
 BASE_URL ="https://api.waveassist.io"
 def call_post_api(path, body) -> tuple:
@@ -254,9 +265,11 @@ def _find_balanced_json(content: str, start_char: str, end_char: str) -> str | N
     return None
 
 
+
 def extract_json_from_content(content: str) -> Union[dict, list]:
     """
     Extract and parse JSON from content using multiple strategies.
+    Includes json_repair as a fallback for malformed JSON.
     
     Args:
         content: Raw content that may contain JSON
@@ -310,6 +323,15 @@ def extract_json_from_content(content: str) -> Union[dict, list]:
         except json.JSONDecodeError:
             pass
     
+    # Strategy 6: Try json_repair for malformed JSON (fallback)
+    try:
+        import json_repair
+        repaired = json_repair.repair_json(content)
+        return json.loads(repaired)
+    except (ImportError, Exception):
+        # json_repair not available or failed, continue to error
+        pass
+    
     raise ValueError(f"Could not extract valid JSON from content: {content[:200]}...")
 
 
@@ -320,6 +342,7 @@ def soft_parse(model_class: Type[T], raw_data: dict) -> T:
     - Ignores extra fields not in the model
     - Allows missing optional fields (they become None)
     - Attempts type coercion where possible
+    - Handles Pydantic field aliases automatically
     - Falls back to model_construct if validation fails (e.g., missing required fields)
     - Fills in missing fields with None or their default values
     
@@ -332,21 +355,40 @@ def soft_parse(model_class: Type[T], raw_data: dict) -> T:
     Returns:
         Instance of the model class (may have None for missing required fields)
     """
-    # Filter to only valid keys
-    valid_keys = set(model_class.model_fields.keys())
-    filtered_data = {k: v for k, v in raw_data.items() if k in valid_keys}
+    # 1. Try validation without filtering first (handles aliases automatically)
+    # Pydantic will use aliases if configured with populate_by_name=True
+    try:
+        return model_class.model_validate(raw_data)
+    except Exception:
+        pass
     
-    # 1. Try normal validation first (handles type coercion, defaults, etc.)
+    # 2. Filter to only valid keys (including aliases)
+    valid_keys = set(model_class.model_fields.keys())
+    # Also check for alias values
+    alias_to_field = {}
+    for field_name, field_info in model_class.model_fields.items():
+        if hasattr(field_info, 'alias') and field_info.alias:
+            alias_to_field[field_info.alias] = field_name
+    
+    filtered_data = {}
+    for k, v in raw_data.items():
+        # Include if it's a direct field name or an alias
+        if k in valid_keys or k in alias_to_field:
+            # Map alias back to field name if needed
+            actual_key = alias_to_field.get(k, k)
+            filtered_data[actual_key] = v
+    
+    # 3. Try normal validation with filtered data (handles type coercion, defaults, etc.)
     try:
         return model_class.model_validate(filtered_data)
     except Exception:
         pass
     
-    # 2. Safety Fallback: "Just give me what you found"
+    # 4. Safety Fallback: "Just give me what you found"
     # model_construct bypasses validation - returns whatever data is available
     obj = model_class.model_construct(**filtered_data)
     
-    # 3. Fill in the gaps: Ensure every field exists
+    # 5. Fill in the gaps: Ensure every field exists
     from pydantic_core import PydanticUndefined
     for field_name in valid_keys:
         if not hasattr(obj, field_name):
@@ -381,7 +423,7 @@ def parse_json_response(content: str, response_model: Type[T], model: str) -> T:
         Validated instance of response_model
         
     Raises:
-        ValueError: If JSON extraction or parsing fails
+        LLMFormatError: If JSON extraction or parsing fails
     """
     try:
         # Extract JSON using multiple strategies
@@ -391,14 +433,14 @@ def parse_json_response(content: str, response_model: Type[T], model: str) -> T:
         # (since the model expects an object/dict)
         if isinstance(parsed_data, list):
             if len(parsed_data) == 0:
-                raise ValueError(
+                raise LLMFormatError(
                     f"Expected JSON object but got empty array. "
                     f"The model '{response_model.__name__}' requires an object, not an array."
                 )
             parsed_data = parsed_data[0]
             # Ensure it's a dict after extracting from array
             if not isinstance(parsed_data, dict):
-                raise ValueError(
+                raise LLMFormatError(
                     f"Expected JSON object but got array with non-object element. "
                     f"The model '{response_model.__name__}' requires an object."
                 )
@@ -406,11 +448,14 @@ def parse_json_response(content: str, response_model: Type[T], model: str) -> T:
         # Soft parse with lenient validation
         return soft_parse(response_model, parsed_data)
         
+    except LLMFormatError:
+        # Re-raise LLMFormatError as-is
+        raise
     except ValueError as e:
-        # Re-raise ValueError from extract_json_from_content
-        raise ValueError(f"Failed to parse response from model '{model}': {e}")
+        # Convert ValueError from extract_json_from_content to LLMFormatError
+        raise LLMFormatError(f"Failed to parse response from model '{model}': {e}")
     except Exception as e:
-        raise ValueError(
+        raise LLMFormatError(
             f"Failed to validate response from model '{model}' against {response_model.__name__}. "
             f"Error: {e}"
         )

@@ -1,5 +1,6 @@
 import requests
 import pandas as pd
+import time
 from waveassist.utils import *
 from waveassist import _config
 import json
@@ -10,6 +11,12 @@ from pydantic import BaseModel
 
 from pathlib import Path
 from openai import OpenAI
+from openai import (
+    APIError,
+    APIConnectionError,
+    RateLimitError,
+    Timeout as OpenAITimeout,
+)
 from datetime import datetime
 from waveassist.constants import *
 
@@ -294,29 +301,40 @@ def call_llm(
     model: str,
     prompt: str,
     response_model: Type[T],
+    should_retry: bool = False,
     **kwargs
 ) -> T:
     """
     Call an LLM via OpenRouter and return structured responses.
     Uses JSON response format and soft parsing for reliable structured output.
+    
     Args:
         model: The model name to use (e.g., "gpt-4o", "anthropic/claude-3.5-sonnet")
         prompt: The prompt to send to the LLM
         response_model: A Pydantic model class that defines the structure of the response
+        should_retry: If True, will retry once for format/JSON errors. Defaults to False.
+                     Transport errors (network, 5xx, 429, timeouts) are always retried once.
         **kwargs: Additional arguments to pass to the chat completion call (e.g., max_tokens, extra_body)
+    
     Returns:
         An instance of the response_model with structured data from the LLM
+    
+    Raises:
+        LLMCallError: If the LLM API call itself fails (network, HTTP errors, timeouts)
+        LLMFormatError: If the LLM call succeeded but JSON extraction/validation failed
+    
     Example:
         from pydantic import BaseModel
         class UserInfo(BaseModel):
             name: str
             age: int
             email: str
-        # With additional parameters
+        # With additional parameters and retry enabled
         result = waveassist.call_llm(
             model="<model_name>",
             prompt="Extract user info: John Doe, 30, john@example.com",
             response_model=UserInfo,
+            should_retry=True,
             max_tokens=3000,
             extra_body={"web_search_options": {"search_context_size": "medium"}})
     """
@@ -351,14 +369,64 @@ def call_llm(
     if any(x in model.lower() for x in UNSUPPORTED_JSON_MODELS_ARRAY):
         response_format = None 
     
-    # Make API call with JSON response format
-    response = client.chat.completions.create(
-        model=model,
-        messages=[{"role": "user", "content": json_prompt}],
-        response_format=response_format,
-        **kwargs
-    )
+    # Transport errors that should always be retried once
+    transport_errors = (APIError, APIConnectionError, RateLimitError, OpenAITimeout)
     
-    # Extract and parse the response
-    content = response.choices[0].message.content
-    return parse_json_response(content, response_model, model)
+    # Attempt the API call with retry logic
+    # For transport errors: always retry once (max 2 attempts total)
+    # For format errors: retry once if should_retry=True (max 2 attempts total)
+    max_attempts = 2
+    format_error_retried = False
+    
+    for attempt in range(max_attempts):
+        try:
+            # Make API call with JSON response format
+            response = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": json_prompt}],
+                response_format=response_format,
+                **kwargs
+            )
+            
+            # Extract and parse the response
+            content = response.choices[0].message.content
+            
+            try:
+                return parse_json_response(content, response_model, model)
+            except LLMFormatError as format_error:
+                # Format error - only retry if should_retry=True and haven't retried yet
+                if should_retry and not format_error_retried:
+                    format_error_retried = True
+                    # Strengthen the prompt for retry
+                    json_prompt = create_json_prompt(
+                        prompt + "\n\nIMPORTANT: Your previous response was invalid JSON. You must output ONLY valid JSON matching the schema, with no explanations or other text.",
+                        response_model
+                    )
+                    # Lower temperature if not already set to improve consistency
+                    if 'temperature' not in kwargs:
+                        kwargs['temperature'] = 0.2
+                    continue
+                else:
+                    # No retry allowed or already retried, raise the error
+                    raise
+                    
+        except transport_errors as e:
+            # Transport error - always retry once (unless this is already the retry)
+            if attempt < max_attempts - 1:
+                # Exponential backoff: wait 1 second, then 2 seconds
+                wait_time = 2 ** attempt
+                time.sleep(wait_time)
+                continue
+            else:
+                # Already retried, raise the error
+                raise LLMCallError(
+                    f"LLM API call failed after {max_attempts} attempts: {str(e)}"
+                ) from e
+        except Exception as e:
+            # Other unexpected errors - don't retry, convert to LLMCallError
+            raise LLMCallError(
+                f"Unexpected error during LLM API call: {str(e)}"
+            ) from e
+    
+    # Should never reach here, but handle edge case
+    raise LLMCallError("LLM API call failed: maximum attempts reached")

@@ -6,7 +6,7 @@ Python SDK/CLI for storing/retrieving structured data in automation workflows. F
 
 ## Tech Stack
 
-Python 3.10+, pandas, requests, python-dotenv, pydantic, openai
+Python 3.10+, pandas, requests, python-dotenv, pydantic, openai, json-repair
 
 ## Core Functions (`__init__.py`)
 
@@ -15,6 +15,16 @@ Python 3.10+, pandas, requests, python-dotenv, pydantic, openai
 - `fetch_data()` - Retrieve data (auto-deserialization)
 - `check_credits_and_notify()` - Check OpenRouter credits, send email notifications
 - `call_llm()` - Call LLMs via OpenRouter with structured Pydantic outputs
+  - `should_retry` parameter (default False): enables retry for format/JSON errors
+  - Transport errors (network, 5xx, 429, timeouts) are always retried once automatically
+
+## Error Handling (`utils.py`)
+
+- `LLMCallError` - Raised when LLM API call fails (network, HTTP errors, timeouts)
+- `LLMFormatError` - Raised when LLM call succeeds but JSON extraction/validation fails
+- JSON extraction uses multiple strategies including `json_repair` fallback for malformed JSON
+- Supports Pydantic field aliases automatically
+- Unwraps common wrapper keys (data, result, response, output, content, body)
 
 ## Key Notes
 
