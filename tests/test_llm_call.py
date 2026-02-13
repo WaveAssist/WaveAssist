@@ -48,6 +48,8 @@ models_list = [
 
 PROMPT = "Format the users into name and age. Users: John, 25 years old and Jane, 30 years old"
 
+import pytest
+
 def get_api_key(api_key_param: str = None) -> str:
     """Get OpenRouter API key from parameter, environment, or skip if headless."""
     if api_key_param and api_key_param != "<here>":
@@ -64,8 +66,19 @@ def get_api_key(api_key_param: str = None) -> str:
     api_key = input("Enter OpenRouter API key (or press Enter to skip): ").strip()
     return api_key if api_key else None
 
+@pytest.mark.parametrize("model_name", models_list)
+@pytest.mark.skipif(
+    not os.getenv("OPENROUTER_API_KEY") and not os.getenv("OPENROUTER_KEY"),
+    reason="OPENROUTER_API_KEY or OPENROUTER_KEY not set",
+)
 def test_llm_call(model_name: str) -> dict:
     """Test if a model supports JSON response format using call_llm."""
+    # Set API key for mock when running under pytest
+    api_key = get_api_key()
+    if not api_key:
+        pytest.skip("OpenRouter API key not available")
+    mock_fetch_data.api_key = api_key
+    init("test-token", "test-project")
     try:
         result = call_llm(
             model=model_name,

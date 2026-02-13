@@ -1,3 +1,4 @@
+import logging
 import requests
 import json
 import re
@@ -5,23 +6,40 @@ import time
 from datetime import datetime
 from typing import Type, TypeVar, get_origin, get_args, Any, Union
 from pydantic import BaseModel
-from waveassist.constants import *
+from waveassist.constants import API_BASE_URL, DASHBOARD_URL
+
+logger = logging.getLogger("waveassist")
 
 T = TypeVar('T', bound=BaseModel)
 
 
-class LLMCallError(Exception):
+class WaveAssistError(Exception):
+    """Base exception for WaveAssist SDK errors."""
+    pass
+
+
+class WaveAssistNotInitializedError(WaveAssistError):
+    """Raised when an operation requires init() to have been called or when config (uid/project_key) is missing."""
+    pass
+
+
+class LLMCallError(WaveAssistError):
     """Raised when the LLM API call itself fails (network, HTTP errors, timeouts)."""
     pass
 
 
-class LLMFormatError(Exception):
+class LLMFormatError(WaveAssistError):
     """Raised when the LLM call succeeded but JSON extraction/validation failed."""
     pass
 
-BASE_URL ="https://api.waveassist.io"
+
+class WaveAssistEmailError(WaveAssistError):
+    """Raised when email validation fails or send_email API call fails (if raise_on_failure=True)."""
+    pass
+
+
 def call_post_api(path, body) -> tuple:
-    url = f"{BASE_URL}/{path}"
+    url = f"{API_BASE_URL}/{path}"
     headers = { "Content-Type": "application/json" }  # JSON content
     try:
         response = requests.post(url, json=body, headers=headers)  # Sends proper JSON
@@ -33,11 +51,11 @@ def call_post_api(path, body) -> tuple:
             error_message = response_dict.get("message", "Unknown error")
             return False, error_message
     except Exception as e:
-        print(f"❌ API call failed: {e}")
+        logger.error("API call failed: %s", e)
         return False, str(e)
 
 def call_post_api_with_files(path, body, files=None) -> tuple:
-    url = f"{BASE_URL}/{path}"
+    url = f"{API_BASE_URL}/{path}"
     try:
         response = requests.post(url, data=body, files=files or {})
         response_dict = response.json()
@@ -47,13 +65,13 @@ def call_post_api_with_files(path, body, files=None) -> tuple:
             error_message = response_dict.get("message", "Unknown error")
             return False, error_message
     except Exception as e:
-        print(f"❌ API call failed: {e}")
+        logger.error("API call failed: %s", e)
         return False, str(e)
 
 
 
 def call_get_api(path, params) -> tuple:
-    url = f"{BASE_URL}/{path}"
+    url = f"{API_BASE_URL}/{path}"
     headers = { "Content-Type": "application/json" }
     try:
         response = requests.get(url, params=params, headers=headers)
@@ -66,7 +84,7 @@ def call_get_api(path, params) -> tuple:
             return False, error_message
 
     except Exception as e:
-        print(f"❌ API GET call failed: {e}")
+        logger.error("API GET call failed: %s", e)
         return False, str(e)
 
 

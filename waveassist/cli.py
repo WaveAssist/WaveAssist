@@ -1,10 +1,12 @@
 import argparse
 import json
+import logging
 import platform
 from waveassist.core import login, push, pull  # You can add deploy, status later
 from waveassist._config import VERSION
 
 def main():
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     parser = argparse.ArgumentParser(
         prog="waveassist",
         description="WaveAssist CLI — Run & manage hosted workflows",

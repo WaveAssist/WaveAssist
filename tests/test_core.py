@@ -7,8 +7,9 @@ from dotenv import load_dotenv
 # Add the parent directory to sys.path so we can import waveassist
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from waveassist import init, store_data, fetch_data, set_worker_defaults
+from waveassist import init, store_data, fetch_data, set_worker_defaults, send_email
 from waveassist import _config
+from waveassist.utils import WaveAssistEmailError
 
 # Dummy in-memory store
 mock_db = {}
@@ -36,10 +37,18 @@ def mock_call_get_api(path, params):
         return False, {"error": "Key not found"}
     return False, {"error": "Invalid GET path"}
 
+
+def mock_call_post_api_with_files(path, body, files=None):
+    if path == "sdk/send_email/":
+        return True, {"success": "1", "message": "ok"}
+    return False, "Invalid path"
+
+
 # Patch into waveassist module
 import waveassist
 waveassist.call_post_api = mock_call_post_api
 waveassist.call_get_api = mock_call_get_api
+waveassist.call_post_api_with_files = mock_call_post_api_with_files
 
 # ------------------ CREDENTIAL HELPERS ------------------
 
@@ -118,6 +127,35 @@ def test_store_and_fetch_dataframe():
     pd.testing.assert_frame_equal(result, df)
     print("✅ test_store_and_fetch_dataframe passed")
 
+
+def test_store_with_explicit_data_type():
+    reset_state()
+    token, project_key, _ = get_test_credentials()
+    init(token, project_key)
+    # Store dict as string explicitly
+    store_data("as_string", {"a": 1}, data_type="string")
+    result = fetch_data("as_string")
+    assert isinstance(result, str)
+    assert "a" in result and "1" in result
+    # Store string as json (wraps in {"value": "..."})
+    store_data("as_json", "hello", data_type="json")
+    result = fetch_data("as_json")
+    assert isinstance(result, dict)
+    assert result.get("value") == "hello"
+    print("✅ test_store_with_explicit_data_type passed")
+
+def test_fetch_missing_key_returns_default():
+    reset_state()
+    token, project_key, _ = get_test_credentials()
+    init(token, project_key)
+    result = fetch_data("nonexistent_key", default="my_default")
+    assert result == "my_default"
+    result_df = fetch_data("nonexistent_key", default=pd.DataFrame())
+    assert isinstance(result_df, pd.DataFrame)
+    assert result_df.empty
+    print("✅ test_fetch_missing_key_returns_default passed")
+
+
 def test_fetch_without_init_raises():
     reset_state()
     try:
@@ -126,6 +164,101 @@ def test_fetch_without_init_raises():
     except Exception as e:
         assert "not initialized" in str(e).lower()
         print("✅ test_fetch_without_init_raises passed")
+
+
+# ------------------ SEND EMAIL TESTS ------------------
+
+def test_send_email_success():
+    reset_state()
+    token, project_key, _ = get_test_credentials()
+    init(token, project_key)
+    ok = send_email("Test subject", "<p>Hello</p>")
+    assert ok is True
+    print("✅ test_send_email_success passed")
+
+
+def test_send_email_empty_subject_raises_by_default():
+    reset_state()
+    token, project_key, _ = get_test_credentials()
+    init(token, project_key)
+    for bad_subject in ("", "   "):
+        try:
+            send_email(bad_subject, "<p>Body</p>")
+            assert False, "Expected WaveAssistEmailError"
+        except WaveAssistEmailError as e:
+            assert "Subject" in str(e) or "empty" in str(e).lower()
+    # With raise_on_failure=False, returns False
+    assert send_email("", "<p>Body</p>", raise_on_failure=False) is False
+    print("✅ test_send_email_empty_subject_raises_by_default passed")
+
+
+def test_send_email_empty_html_raises_by_default():
+    reset_state()
+    token, project_key, _ = get_test_credentials()
+    init(token, project_key)
+    for bad_html in ("", "   "):
+        try:
+            send_email("Subject", bad_html)
+            assert False, "Expected WaveAssistEmailError"
+        except WaveAssistEmailError as e:
+            assert "HTML" in str(e) or "empty" in str(e).lower()
+    assert send_email("Subject", "", raise_on_failure=False) is False
+    print("✅ test_send_email_empty_html_raises_by_default passed")
+
+
+def test_send_email_raise_on_failure_validation_raises():
+    reset_state()
+    token, project_key, _ = get_test_credentials()
+    init(token, project_key)
+    try:
+        send_email("", "<p>Body</p>")
+        assert False, "Expected WaveAssistEmailError"
+    except WaveAssistEmailError as e:
+        assert "Subject" in str(e) or "empty" in str(e).lower()
+    try:
+        send_email("Sub", "")
+        assert False, "Expected WaveAssistEmailError"
+    except WaveAssistEmailError as e:
+        assert "HTML" in str(e) or "empty" in str(e).lower()
+    print("✅ test_send_email_raise_on_failure_validation_raises passed")
+
+
+def test_send_email_without_init_raises():
+    reset_state()
+    try:
+        send_email("Sub", "<p>Hi</p>")
+        assert False, "Expected an exception when init was not called"
+    except Exception as e:
+        assert "not initialized" in str(e).lower()
+    print("✅ test_send_email_without_init_raises passed")
+
+
+def test_send_email_invalid_attachment_raises_by_default():
+    reset_state()
+    token, project_key, _ = get_test_credentials()
+    init(token, project_key)
+    try:
+        send_email("Sub", "<p>Hi</p>", attachment_file=object())
+        assert False, "Expected WaveAssistEmailError"
+    except WaveAssistEmailError as e:
+        assert "read" in str(e).lower() or "attachment" in str(e).lower()
+    assert send_email("Sub", "<p>Hi</p>", attachment_file=object(), raise_on_failure=False) is False
+    print("✅ test_send_email_invalid_attachment_raises_by_default passed")
+
+
+def test_send_email_valid_attachment_success():
+    reset_state()
+    token, project_key, _ = get_test_credentials()
+    init(token, project_key)
+    # File-like with .read() and .name
+    class FakeFile:
+        name = "report.pdf"
+        def read(self):
+            return b"fake pdf"
+    ok = send_email("Sub", "<p>Hi</p>", attachment_file=FakeFile())
+    assert ok is True
+    print("✅ test_send_email_valid_attachment_success passed")
+
 
 def test_default_environment_key_used():
     reset_state()
@@ -204,7 +337,16 @@ if __name__ == "__main__":
     test_store_and_fetch_string()
     test_store_and_fetch_json()
     test_store_and_fetch_dataframe()
+    test_fetch_missing_key_returns_default()
+    test_store_with_explicit_data_type()
     test_fetch_without_init_raises()
+    test_send_email_success()
+    test_send_email_empty_subject_raises_by_default()
+    test_send_email_empty_html_raises_by_default()
+    test_send_email_raise_on_failure_validation_raises()
+    test_send_email_without_init_raises()
+    test_send_email_invalid_attachment_raises_by_default()
+    test_send_email_valid_attachment_success()
     test_default_environment_key_used()
     test_env_fallbacks()
     test_init_from_dotenv()
