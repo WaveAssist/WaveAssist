@@ -13,31 +13,6 @@ logger = logging.getLogger("waveassist")
 T = TypeVar('T', bound=BaseModel)
 
 
-class WaveAssistError(Exception):
-    """Base exception for WaveAssist SDK errors."""
-    pass
-
-
-class WaveAssistNotInitializedError(WaveAssistError):
-    """Raised when an operation requires init() to have been called or when config (uid/project_key) is missing."""
-    pass
-
-
-class LLMCallError(WaveAssistError):
-    """Raised when the LLM API call itself fails (network, HTTP errors, timeouts)."""
-    pass
-
-
-class LLMFormatError(WaveAssistError):
-    """Raised when the LLM call succeeded but JSON extraction/validation failed."""
-    pass
-
-
-class WaveAssistEmailError(WaveAssistError):
-    """Raised when email validation fails or send_email API call fails (if raise_on_failure=True)."""
-    pass
-
-
 def call_post_api(path, body) -> tuple:
     url = f"{API_BASE_URL}/{path}"
     headers = { "Content-Type": "application/json" }  # JSON content
@@ -441,7 +416,7 @@ def parse_json_response(content: str, response_model: Type[T], model: str) -> T:
         Validated instance of response_model
         
     Raises:
-        LLMFormatError: If JSON extraction or parsing fails
+        ValueError: If JSON extraction or parsing fails
     """
     try:
         # Extract JSON using multiple strategies
@@ -451,29 +426,24 @@ def parse_json_response(content: str, response_model: Type[T], model: str) -> T:
         # (since the model expects an object/dict)
         if isinstance(parsed_data, list):
             if len(parsed_data) == 0:
-                raise LLMFormatError(
+                raise ValueError(
                     f"Expected JSON object but got empty array. "
                     f"The model '{response_model.__name__}' requires an object, not an array."
                 )
             parsed_data = parsed_data[0]
             # Ensure it's a dict after extracting from array
             if not isinstance(parsed_data, dict):
-                raise LLMFormatError(
+                raise ValueError(
                     f"Expected JSON object but got array with non-object element. "
                     f"The model '{response_model.__name__}' requires an object."
                 )
 
         # Soft parse with lenient validation
         return soft_parse(response_model, parsed_data)
-        
-    except LLMFormatError:
-        # Re-raise LLMFormatError as-is
+    except ValueError:
         raise
-    except ValueError as e:
-        # Convert ValueError from extract_json_from_content to LLMFormatError
-        raise LLMFormatError(f"Failed to parse response from model '{model}': {e}")
     except Exception as e:
-        raise LLMFormatError(
+        raise ValueError(
             f"Failed to validate response from model '{model}' against {response_model.__name__}. "
             f"Error: {e}"
         )

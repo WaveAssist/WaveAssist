@@ -30,11 +30,6 @@ from waveassist.utils import (
     create_json_prompt,
     parse_json_response,
     get_email_template_credits_limit_reached,
-    WaveAssistError,
-    WaveAssistNotInitializedError,
-    WaveAssistEmailError,
-    LLMCallError,
-    LLMFormatError,
 )
 
 logger = logging.getLogger("waveassist")
@@ -50,11 +45,6 @@ __all__ = [
     "check_credits_and_notify",
     "call_llm",
     "StoreDataType",
-    "WaveAssistError",
-    "WaveAssistNotInitializedError",
-    "WaveAssistEmailError",
-    "LLMCallError",
-    "LLMFormatError",
 ]
 
 
@@ -112,11 +102,11 @@ def init(
 
     # Validate critical keys
     if not resolved_token:
-        raise WaveAssistNotInitializedError(
+        raise ValueError(
             "WaveAssist init failed: UID is missing. Pass explicitly or set uid in .env."
         )
     if not resolved_project_key:
-        raise WaveAssistNotInitializedError(
+        raise ValueError(
             "WaveAssist init failed: project key is missing. Pass explicitly or set project_key in .env."
         )
 
@@ -130,7 +120,7 @@ def init(
     if check_credits:
         credits_available = str(fetch_data("credits_available", default="1"))
         if credits_available == "0":
-            raise WaveAssistNotInitializedError("Credits not available, skipping this operation")
+            raise RuntimeError("Credits not available, skipping this operation")
 
 
 def set_worker_defaults(
@@ -175,7 +165,7 @@ def store_data(
         True if store succeeded, False otherwise.
     """
     if not _config.LOGIN_TOKEN or not _config.PROJECT_KEY:
-        raise WaveAssistNotInitializedError(
+        raise RuntimeError(
             "WaveAssist is not initialized. Please call waveassist.init(...) first."
         )
 
@@ -273,7 +263,7 @@ def fetch_data(
         stored data_type. Returns `default` on failure or missing key.
     """
     if not _config.LOGIN_TOKEN or not _config.PROJECT_KEY:
-        raise WaveAssistNotInitializedError(
+        raise RuntimeError(
             "WaveAssist is not initialized. Please call waveassist.init(...) first."
         )
 
@@ -349,17 +339,18 @@ def send_email(
         subject: Email subject (non-empty, max 500 chars).
         html_content: HTML body (non-empty, max 5M chars).
         attachment_file: Optional file-like object with .read() and optional .name.
-        raise_on_failure: If True, raise WaveAssistEmailError on validation or API failure.
+        raise_on_failure: If True, raise ValueError/RuntimeError on validation or API failure.
 
     Returns:
         True if sent successfully, False otherwise (unless raise_on_failure=True).
 
     Raises:
-        WaveAssistNotInitializedError: If WaveAssist is not initialized.
-        WaveAssistEmailError: If validation fails or API fails and raise_on_failure=True.
+        RuntimeError: If WaveAssist is not initialized.
+        ValueError: If validation fails (empty subject/html, invalid attachment).
+        RuntimeError: If API fails and raise_on_failure=True.
     """
     if not _config.LOGIN_TOKEN or not _config.PROJECT_KEY:
-        raise WaveAssistNotInitializedError(
+        raise RuntimeError(
             "WaveAssist is not initialized. Please call waveassist.init(...) first."
         )
 
@@ -368,13 +359,13 @@ def send_email(
     if not subject_clean:
         err = "Subject cannot be empty."
         if raise_on_failure:
-            raise WaveAssistEmailError(err)
+            raise ValueError(err)
         logger.error("%s", err)
         return False
     if len(subject_clean) > _SEND_EMAIL_SUBJECT_MAX_LENGTH:
         err = f"Subject too long (max {_SEND_EMAIL_SUBJECT_MAX_LENGTH} chars)."
         if raise_on_failure:
-            raise WaveAssistEmailError(err)
+            raise ValueError(err)
         logger.error("%s", err)
         return False
 
@@ -382,13 +373,13 @@ def send_email(
     if not html_clean:
         err = "HTML content cannot be empty."
         if raise_on_failure:
-            raise WaveAssistEmailError(err)
+            raise ValueError(err)
         logger.error("%s", err)
         return False
     if len(html_clean) > _SEND_EMAIL_HTML_MAX_LENGTH:
         err = f"HTML content too long (max {_SEND_EMAIL_HTML_MAX_LENGTH} chars)."
         if raise_on_failure:
-            raise WaveAssistEmailError(err)
+            raise ValueError(err)
         logger.error("%s", err)
         return False
 
@@ -398,7 +389,7 @@ def send_email(
         if not callable(getattr(attachment_file, "read", None)):
             err = "Attachment must be a file-like object with a .read() method."
             if raise_on_failure:
-                raise WaveAssistEmailError(err)
+                raise ValueError(err)
             logger.error("%s", err)
             return False
         file_name = getattr(attachment_file, "name", "attachment")
@@ -427,7 +418,7 @@ def send_email(
     if not success:
         logger.error("Error sending email: %s", response_msg)
         if raise_on_failure:
-            raise WaveAssistEmailError(response_msg or "Send email failed.")
+            raise RuntimeError(response_msg or "Send email failed.")
         return False
     logger.info("Email sent successfully.")
     return True
@@ -436,7 +427,7 @@ def send_email(
 def fetch_openrouter_credits():
     """Fetch the credit balance for the current project."""
     if not _config.LOGIN_TOKEN or not _config.PROJECT_KEY:
-        raise WaveAssistNotInitializedError(
+        raise RuntimeError(
             "WaveAssist is not initialized. Please call waveassist.init(...) first."
         )
     path = "/fetch_openrouter_credits/" + _config.LOGIN_TOKEN
@@ -455,7 +446,7 @@ def check_credits_and_notify(
     Check OpenRouter credits and send an email notification if insufficient credits are available.
     """
     if not _config.LOGIN_TOKEN or not _config.PROJECT_KEY:
-        raise WaveAssistNotInitializedError(
+        raise RuntimeError(
             "WaveAssist is not initialized. Please call waveassist.init(...) first."
         )
 
@@ -464,7 +455,7 @@ def check_credits_and_notify(
 
     # Check if the API call failed (empty dict or missing key)
     if not credits_data or "limit_remaining" not in credits_data:
-        raise WaveAssistError("Failed to fetch OpenRouter credits. Unable to determine credit balance.")
+        raise RuntimeError("Failed to fetch OpenRouter credits. Unable to determine credit balance.")
     
     credits_remaining = float(credits_data.get("limit_remaining", 0))
     
@@ -526,8 +517,8 @@ def call_llm(
         An instance of the response_model with structured data from the LLM
     
     Raises:
-        LLMCallError: If the LLM API call itself fails (network, HTTP errors, timeouts)
-        LLMFormatError: If the LLM call succeeded but JSON extraction/validation failed
+        RuntimeError: If the LLM API call fails (network, HTTP errors, timeouts)
+        ValueError: If the LLM call succeeded but JSON extraction/validation failed
     
     Example:
         from pydantic import BaseModel
@@ -545,14 +536,14 @@ def call_llm(
             extra_body={"web_search_options": {"search_context_size": "medium"}})
     """
     if not _config.LOGIN_TOKEN or not _config.PROJECT_KEY:
-        raise WaveAssistNotInitializedError(
+        raise RuntimeError(
             "WaveAssist is not initialized. Please call waveassist.init(...) first."
         )
 
     # Fetch API key from WaveAssist data storage
     api_key = fetch_data(OPENROUTER_API_STORED_DATA_KEY)
     if not api_key:
-        raise WaveAssistError(
+        raise ValueError(
             "OpenRouter API key not found. Please store it using waveassist.store_data('open_router_key', 'your_api_key')"
         )
     
@@ -599,7 +590,7 @@ def call_llm(
             
             try:
                 return parse_json_response(content, response_model, model)
-            except LLMFormatError as format_error:
+            except ValueError as format_error:
                 # Format error - only retry if should_retry=True and haven't retried yet
                 if should_retry and not format_error_retried:
                     format_error_retried = True
@@ -625,14 +616,14 @@ def call_llm(
                 continue
             else:
                 # Already retried, raise the error
-                raise LLMCallError(
+                raise RuntimeError(
                     f"LLM API call failed after {max_attempts} attempts: {str(e)}"
                 ) from e
         except Exception as e:
-            # Other unexpected errors - don't retry, convert to LLMCallError
-            raise LLMCallError(
+            # Other unexpected errors - don't retry
+            raise RuntimeError(
                 f"Unexpected error during LLM API call: {str(e)}"
             ) from e
-    
+
     # Should never reach here, but handle edge case
-    raise LLMCallError("LLM API call failed: maximum attempts reached")
+    raise RuntimeError("LLM API call failed: maximum attempts reached")

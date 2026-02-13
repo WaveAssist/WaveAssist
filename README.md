@@ -42,7 +42,7 @@ waveassist.init(
     project_key="your-project-key",
     environment_key="your-env-key",  # optional
     run_id="run-123",  # optional
-    check_credits=True  # optional: raises WaveAssistNotInitializedError if credits_available is "0"
+    check_credits=True  # optional: raises RuntimeError if credits_available is "0"
 )
 
 # When check_credits=True, a missing credits_available key is treated as credits available (default "1").
@@ -147,7 +147,7 @@ waveassist.send_email(
 
 - **Validation:** Subject and HTML body must be non-empty (and within length limits). Attachments must be file-like with a `.read()` method.
 - **Retry:** The SDK retries the send once on transient failure.
-- **Errors:** By default, validation or API failures raise `WaveAssistEmailError`. Pass `raise_on_failure=False` to return `False` instead.
+- **Errors:** By default, validation failures raise `ValueError` and API failures raise `RuntimeError`. Pass `raise_on_failure=False` to return `False` instead.
 
 ---
 
@@ -227,7 +227,7 @@ result = waveassist.call_llm(
 )
 ```
 
-**Errors:** `LLMCallError` (API/network failure), `LLMFormatError` (invalid or non-JSON response). Transport errors are retried once automatically.
+**Errors:** `RuntimeError` (API/network failure), `ValueError` (invalid or non-JSON response). Transport errors are retried once automatically.
 
 ---
 
@@ -287,7 +287,7 @@ python tests/test_json_extract.py
 
 - String, JSON, and DataFrame roundtrips; `store_data` with explicit `data_type`; `fetch_data` with `default`
 - `send_email` validation, attachments, and `raise_on_failure`
-- Error handling when `init()` is not called (`WaveAssistNotInitializedError`)
+- Error handling when `init()` is not called (`RuntimeError`)
 - Environment variable and `.env` file resolution
 - JSON template generation for Pydantic models
 - JSON extraction from various formats (pure JSON, markdown code blocks, embedded text)
@@ -302,7 +302,7 @@ python tests/test_json_extract.py
 WaveAssist/
 ├── waveassist/
 │   ├── __init__.py          # Public API: init(), store_data(), fetch_data(), send_email(),
-│   │                         # check_credits_and_notify(), call_llm(); exceptions (WaveAssistError, etc.)
+│   │                         # check_credits_and_notify(), call_llm()
 │   ├── _config.py            # Global config and version
 │   ├── constants.py         # API_BASE_URL, OpenRouter, dashboard URLs
 │   ├── utils.py             # API helpers, JSON parsing, soft_parse, exception classes
@@ -322,35 +322,8 @@ WaveAssist/
 - Data is stored in your [WaveAssist backend](https://waveassist.io) (e.g. MongoDB) as serialized content
 - `store_data()` auto-detects the object type and serializes it (dataframe/JSON/string), or use `data_type` to force a type
 - `fetch_data()` returns the correct Python type and supports a `default` when the key is missing or the API fails
-- **Logging:** The SDK uses the standard library `logging` module (logger name `"waveassist"`). Configure level or handlers to control or suppress SDK messages (e.g. `logging.getLogger("waveassist").setLevel(logging.WARNING)`)
-
----
-
-## ⚠️ Exceptions
-
-The SDK uses a small exception hierarchy so you can handle errors explicitly:
-
-| Exception | When |
-|-----------|------|
-| `WaveAssistError` | Base class for all SDK errors |
-| `WaveAssistNotInitializedError` | `init()` not called, or missing uid/project_key / credits not available |
-| `WaveAssistEmailError` | Email validation failed or send failed (when `raise_on_failure=True`) |
-| `LLMCallError` | LLM API call failed (network, HTTP, timeouts) |
-| `LLMFormatError` | LLM returned invalid or non-JSON response |
-
-Example:
-
-```python
-from waveassist import init, fetch_data, WaveAssistNotInitializedError, WaveAssistEmailError
-
-try:
-    waveassist.init()
-    waveassist.send_email("Subj", "<p>Hi</p>")
-except WaveAssistNotInitializedError as e:
-    print("Config missing:", e)
-except WaveAssistEmailError as e:
-    print("Email failed:", e)
-```
+- **Logging:** The SDK uses the standard library `logging` module (logger name `"waveassist"`). Configure level or handlers to control or suppress SDK messages (e.g. `logging.getLogger("waveassist").setLevel(logging.WARNING)`).
+- **Errors:** The SDK raises standard exceptions: **`ValueError`** for bad or missing input (e.g. missing uid/project_key in init, email validation, OpenRouter key not found, LLM JSON/format failure) and **`RuntimeError`** for invalid state or API failures (e.g. not initialized, credits not available, send email failed, LLM API/network failure). Catch `ValueError` or `RuntimeError` (or `Exception`) as needed.
 
 ---
 

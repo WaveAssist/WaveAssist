@@ -6,7 +6,14 @@ from waveassist.core import login, push, pull  # You can add deploy, status late
 from waveassist._config import VERSION
 
 def main():
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    # Configure the waveassist logger so CLI commands (login, push, pull) show output
+    # even if loggers were created at import time or root was already configured
+    _logger = logging.getLogger("waveassist")
+    if not _logger.handlers:
+        _handler = logging.StreamHandler()
+        _handler.setFormatter(logging.Formatter("%(message)s"))
+        _logger.addHandler(_handler)
+        _logger.setLevel(logging.INFO)
     parser = argparse.ArgumentParser(
         prog="waveassist",
         description="WaveAssist CLI — Run & manage hosted workflows",

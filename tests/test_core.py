@@ -9,7 +9,6 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 from waveassist import init, store_data, fetch_data, set_worker_defaults, send_email
 from waveassist import _config
-from waveassist.utils import WaveAssistEmailError
 
 # Dummy in-memory store
 mock_db = {}
@@ -184,8 +183,8 @@ def test_send_email_empty_subject_raises_by_default():
     for bad_subject in ("", "   "):
         try:
             send_email(bad_subject, "<p>Body</p>")
-            assert False, "Expected WaveAssistEmailError"
-        except WaveAssistEmailError as e:
+            assert False, "Expected ValueError"
+        except ValueError as e:
             assert "Subject" in str(e) or "empty" in str(e).lower()
     # With raise_on_failure=False, returns False
     assert send_email("", "<p>Body</p>", raise_on_failure=False) is False
@@ -199,8 +198,8 @@ def test_send_email_empty_html_raises_by_default():
     for bad_html in ("", "   "):
         try:
             send_email("Subject", bad_html)
-            assert False, "Expected WaveAssistEmailError"
-        except WaveAssistEmailError as e:
+            assert False, "Expected ValueError"
+        except ValueError as e:
             assert "HTML" in str(e) or "empty" in str(e).lower()
     assert send_email("Subject", "", raise_on_failure=False) is False
     print("✅ test_send_email_empty_html_raises_by_default passed")
@@ -212,13 +211,13 @@ def test_send_email_raise_on_failure_validation_raises():
     init(token, project_key)
     try:
         send_email("", "<p>Body</p>")
-        assert False, "Expected WaveAssistEmailError"
-    except WaveAssistEmailError as e:
+        assert False, "Expected ValueError"
+    except ValueError as e:
         assert "Subject" in str(e) or "empty" in str(e).lower()
     try:
         send_email("Sub", "")
-        assert False, "Expected WaveAssistEmailError"
-    except WaveAssistEmailError as e:
+        assert False, "Expected ValueError"
+    except ValueError as e:
         assert "HTML" in str(e) or "empty" in str(e).lower()
     print("✅ test_send_email_raise_on_failure_validation_raises passed")
 
@@ -239,8 +238,8 @@ def test_send_email_invalid_attachment_raises_by_default():
     init(token, project_key)
     try:
         send_email("Sub", "<p>Hi</p>", attachment_file=object())
-        assert False, "Expected WaveAssistEmailError"
-    except WaveAssistEmailError as e:
+        assert False, "Expected ValueError"
+    except ValueError as e:
         assert "read" in str(e).lower() or "attachment" in str(e).lower()
     assert send_email("Sub", "<p>Hi</p>", attachment_file=object(), raise_on_failure=False) is False
     print("✅ test_send_email_invalid_attachment_raises_by_default passed")
