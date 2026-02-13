@@ -1,3 +1,4 @@
+import logging
 import requests
 import json
 import re
@@ -5,23 +6,15 @@ import time
 from datetime import datetime
 from typing import Type, TypeVar, get_origin, get_args, Any, Union
 from pydantic import BaseModel
-from waveassist.constants import *
+from waveassist.constants import API_BASE_URL, DASHBOARD_URL
+
+logger = logging.getLogger("waveassist")
 
 T = TypeVar('T', bound=BaseModel)
 
 
-class LLMCallError(Exception):
-    """Raised when the LLM API call itself fails (network, HTTP errors, timeouts)."""
-    pass
-
-
-class LLMFormatError(Exception):
-    """Raised when the LLM call succeeded but JSON extraction/validation failed."""
-    pass
-
-BASE_URL ="https://api.waveassist.io"
 def call_post_api(path, body) -> tuple:
-    url = f"{BASE_URL}/{path}"
+    url = f"{API_BASE_URL}/{path}"
     headers = { "Content-Type": "application/json" }  # JSON content
     try:
         response = requests.post(url, json=body, headers=headers)  # Sends proper JSON
@@ -33,11 +26,11 @@ def call_post_api(path, body) -> tuple:
             error_message = response_dict.get("message", "Unknown error")
             return False, error_message
     except Exception as e:
-        print(f"❌ API call failed: {e}")
+        logger.error("API call failed: %s", e)
         return False, str(e)
 
 def call_post_api_with_files(path, body, files=None) -> tuple:
-    url = f"{BASE_URL}/{path}"
+    url = f"{API_BASE_URL}/{path}"
     try:
         response = requests.post(url, data=body, files=files or {})
         response_dict = response.json()
@@ -47,13 +40,13 @@ def call_post_api_with_files(path, body, files=None) -> tuple:
             error_message = response_dict.get("message", "Unknown error")
             return False, error_message
     except Exception as e:
-        print(f"❌ API call failed: {e}")
+        logger.error("API call failed: %s", e)
         return False, str(e)
 
 
 
 def call_get_api(path, params) -> tuple:
-    url = f"{BASE_URL}/{path}"
+    url = f"{API_BASE_URL}/{path}"
     headers = { "Content-Type": "application/json" }
     try:
         response = requests.get(url, params=params, headers=headers)
@@ -66,7 +59,7 @@ def call_get_api(path, params) -> tuple:
             return False, error_message
 
     except Exception as e:
-        print(f"❌ API GET call failed: {e}")
+        logger.error("API GET call failed: %s", e)
         return False, str(e)
 
 
@@ -423,7 +416,7 @@ def parse_json_response(content: str, response_model: Type[T], model: str) -> T:
         Validated instance of response_model
         
     Raises:
-        LLMFormatError: If JSON extraction or parsing fails
+        ValueError: If JSON extraction or parsing fails
     """
     try:
         # Extract JSON using multiple strategies
@@ -433,29 +426,24 @@ def parse_json_response(content: str, response_model: Type[T], model: str) -> T:
         # (since the model expects an object/dict)
         if isinstance(parsed_data, list):
             if len(parsed_data) == 0:
-                raise LLMFormatError(
+                raise ValueError(
                     f"Expected JSON object but got empty array. "
                     f"The model '{response_model.__name__}' requires an object, not an array."
                 )
             parsed_data = parsed_data[0]
             # Ensure it's a dict after extracting from array
             if not isinstance(parsed_data, dict):
-                raise LLMFormatError(
+                raise ValueError(
                     f"Expected JSON object but got array with non-object element. "
                     f"The model '{response_model.__name__}' requires an object."
                 )
 
         # Soft parse with lenient validation
         return soft_parse(response_model, parsed_data)
-        
-    except LLMFormatError:
-        # Re-raise LLMFormatError as-is
+    except ValueError:
         raise
-    except ValueError as e:
-        # Convert ValueError from extract_json_from_content to LLMFormatError
-        raise LLMFormatError(f"Failed to parse response from model '{model}': {e}")
     except Exception as e:
-        raise LLMFormatError(
+        raise ValueError(
             f"Failed to validate response from model '{model}' against {response_model.__name__}. "
             f"Error: {e}"
         )

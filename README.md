@@ -42,9 +42,10 @@ waveassist.init(
     project_key="your-project-key",
     environment_key="your-env-key",  # optional
     run_id="run-123",  # optional
-    check_credits=True  # optional: raises error if credits_available is "0"
+    check_credits=True  # optional: raises RuntimeError if credits_available is "0"
 )
 
+# When check_credits=True, a missing credits_available key is treated as credits available (default "1").
 # Will auto-resolve from:
 # 1. Explicit args (if passed)
 # 2. .env file (uid, project_key, environment_key)
@@ -66,6 +67,8 @@ This file will be ignored by Git if you use our default `.gitignore`.
 ---
 
 ### 3. Store Data
+
+Data is serialized by type. You can rely on type-safe storage and retrieval.
 
 #### 🧾 Store a string
 
@@ -89,6 +92,20 @@ profile = {"name": "Alice", "age": 30}
 waveassist.store_data("profile_data", profile)
 ```
 
+#### 📌 Optional: Force storage type
+
+Store data as a specific type regardless of input:
+
+```python
+# Store a dict as a string
+waveassist.store_data("config", {"a": 1}, data_type="string")
+
+# Store a string as JSON (wraps as {"value": "..."})
+waveassist.store_data("greeting", "Hello", data_type="json")
+```
+
+**Parameters:** `store_data(key, data, run_based=False, data_type=None)`. Use `data_type="string"`, `"json"`, or `"dataframe"` to force that storage type.
+
 ---
 
 ### 4. Fetch Data
@@ -96,15 +113,45 @@ waveassist.store_data("profile_data", profile)
 ```python
 result = waveassist.fetch_data("user_scores")
 
-# Will return:
-# - A DataFrame (if stored as one)
-# - A dict/list (if stored as JSON)
-# - A string (if stored as text)
+# Returns the correct type:
+# - pd.DataFrame (if stored as dataframe)
+# - dict or list (if stored as JSON)
+# - str (if stored as string)
 ```
+
+**Use a default when the key might be missing:**
+
+```python
+# Return a default if key is missing or API fails
+count = waveassist.fetch_data("failure_count", default=0)
+greeting = waveassist.fetch_data("welcome", default="Hello")
+df = waveassist.fetch_data("results", default=pd.DataFrame())  # empty DataFrame
+```
+
+**Parameters:** `fetch_data(key, run_based=False, default=None)`.
 
 ---
 
-### 5. Check Credits and Notify
+### 5. Send Email
+
+Send emails (e.g. for notifications) via the WaveAssist backend:
+
+```python
+waveassist.send_email(
+    subject="Daily report",
+    html_content="<p>Summary: ...</p>",
+    attachment_file=open("report.pdf", "rb"),  # optional
+    raise_on_failure=True  # default: raise WaveAssistEmailError on validation or API failure
+)
+```
+
+- **Validation:** Subject and HTML body must be non-empty (and within length limits). Attachments must be file-like with a `.read()` method.
+- **Retry:** The SDK retries the send once on transient failure.
+- **Errors:** By default, validation failures raise `ValueError` and API failures raise `RuntimeError`. Pass `raise_on_failure=False` to return `False` instead.
+
+---
+
+### 6. Check Credits and Notify
 
 Check OpenRouter credits and automatically send email notifications if insufficient credits are available:
 
@@ -132,9 +179,9 @@ else:
 
 ---
 
-### 6. Call LLM with Structured Outputs
+### 7. Call LLM with Structured Outputs
 
-Use Instructor library to get structured responses from LLMs via OpenRouter:
+Get structured responses from LLMs via OpenRouter with Pydantic models:
 
 ```python
 from pydantic import BaseModel
@@ -174,10 +221,13 @@ result = waveassist.call_llm(
     model="anthropic/claude-3-opus",
     prompt="Analyze this data...",
     response_model=MyModel,
+    should_retry=True,  # retry once on JSON/format errors
     max_tokens=3000,
     extra_body={"web_search_options": {"search_context_size": "medium"}}
 )
 ```
+
+**Errors:** `RuntimeError` (API/network failure), `ValueError` (invalid or non-JSON response). Transport errors are retried once automatically.
 
 ---
 
@@ -221,23 +271,23 @@ Display CLI version and environment information.
 
 ## 🧪 Running Tests
 
-Run the test files directly:
+Run with pytest (recommended) or the test scripts:
 
 ```bash
-# Core SDK tests (init, store_data, fetch_data)
+# All tests (use project Python if you have a venv)
+python -m pytest tests/ -v
+
+# Or run modules directly
 python tests/test_core.py
-
-# JSON generation tests (create_json_prompt, generate_json_template)
 python tests/test_json_generate.py
-
-# JSON extraction/parsing tests (extract_json_from_content, soft_parse, parse_json_response)
 python tests/test_json_extract.py
 ```
 
 ✅ Includes tests for:
 
-- String, JSON, and DataFrame roundtrips
-- Error handling when `init()` is not called
+- String, JSON, and DataFrame roundtrips; `store_data` with explicit `data_type`; `fetch_data` with `default`
+- `send_email` validation, attachments, and `raise_on_failure`
+- Error handling when `init()` is not called (`RuntimeError`)
 - Environment variable and `.env` file resolution
 - JSON template generation for Pydantic models
 - JSON extraction from various formats (pure JSON, markdown code blocks, embedded text)
@@ -251,15 +301,18 @@ python tests/test_json_extract.py
 ```
 WaveAssist/
 ├── waveassist/
-│   ├── __init__.py          # init(), store_data(), fetch_data(), check_credits_and_notify(), call_llm()
-│   ├── _config.py           # Global config vars
-│   ├── constants.py         # Constants and email templates
-│   ├── utils.py             # API utilities, JSON parsing, soft_parse
-│   └── cli.py               # Command-line interface
+│   ├── __init__.py          # Public API: init(), store_data(), fetch_data(), send_email(),
+│   │                         # check_credits_and_notify(), call_llm()
+│   ├── _config.py            # Global config and version
+│   ├── constants.py         # API_BASE_URL, OpenRouter, dashboard URLs
+│   ├── utils.py             # API helpers, JSON parsing, soft_parse, exception classes
+│   ├── core.py              # CLI: login, pull, push (uses constants for URLs)
+│   └── cli.py               # Command-line entry (waveassist login/push/pull/version)
 ├── tests/
-│   ├── test_core.py         # Core SDK tests (init, store, fetch)
+│   ├── test_core.py         # Core SDK + send_email tests
 │   ├── test_json_generate.py # JSON template generation tests
-│   └── test_json_extract.py  # JSON extraction/parsing tests
+│   ├── test_json_extract.py  # JSON extraction/parsing tests
+│   └── test_llm_call.py     # call_llm integration tests (skipped without API key)
 ```
 
 ---
@@ -267,8 +320,10 @@ WaveAssist/
 ## 📌 Notes
 
 - Data is stored in your [WaveAssist backend](https://waveassist.io) (e.g. MongoDB) as serialized content
-- `store_data()` auto-detects the object type and serializes it (CSV/JSON/text)
-- `fetch_data()` deserializes it back to the right Python object
+- `store_data()` auto-detects the object type and serializes it (dataframe/JSON/string), or use `data_type` to force a type
+- `fetch_data()` returns the correct Python type and supports a `default` when the key is missing or the API fails
+- **Logging:** The SDK uses the standard library `logging` module (logger name `"waveassist"`). Configure level or handlers to control or suppress SDK messages (e.g. `logging.getLogger("waveassist").setLevel(logging.WARNING)`).
+- **Errors:** The SDK raises standard exceptions: **`ValueError`** for bad or missing input (e.g. missing uid/project_key in init, email validation, OpenRouter key not found, LLM JSON/format failure) and **`RuntimeError`** for invalid state or API failures (e.g. not initialized, credits not available, send email failed, LLM API/network failure). Catch `ValueError` or `RuntimeError` (or `Exception`) as needed.
 
 ---
 

@@ -15,7 +15,6 @@ from waveassist.utils import (
     extract_json_from_content,
     soft_parse,
     parse_json_response,
-    LLMFormatError,
 )
 
 # ==================== TEST MODELS ====================
@@ -1275,8 +1274,8 @@ def test_parse_json_response_empty_array_raises():
     content = '[]'
     try:
         parse_json_response(content, SimpleModel, "test-model")
-        assert False, "Should have raised LLMFormatError for empty array"
-    except LLMFormatError as e:
+        assert False, "Should have raised ValueError for empty array"
+    except ValueError as e:
         assert "empty array" in str(e).lower() or "array" in str(e).lower()
         assert "SimpleModel" in str(e) or "object" in str(e).lower()
     
@@ -1288,8 +1287,8 @@ def test_parse_json_response_array_with_non_object_raises():
     content = '[1, 2, 3]'
     try:
         parse_json_response(content, SimpleModel, "test-model")
-        assert False, "Should have raised LLMFormatError for array with non-object elements"
-    except LLMFormatError as e:
+        assert False, "Should have raised ValueError for array with non-object elements"
+    except ValueError as e:
         assert "object" in str(e).lower() or "array" in str(e).lower()
     
     print("✅ test_parse_json_response_array_with_non_object_raises passed")
