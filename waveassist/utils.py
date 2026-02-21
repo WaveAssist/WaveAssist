@@ -4,7 +4,7 @@ import json
 import re
 import time
 from datetime import datetime
-from typing import Type, TypeVar, get_origin, get_args, Any, Union
+from typing import Type, TypeVar, get_origin, get_args, Any, Union, Literal
 from pydantic import BaseModel
 from waveassist.constants import API_BASE_URL, DASHBOARD_URL
 
@@ -143,6 +143,11 @@ def _get_type_name(annotation: Any) -> str:
             return _get_type_name(non_none_args[0])
         return " | ".join(_get_type_name(a) for a in non_none_args)
     
+    # Handle Literal (show allowed values)
+    if origin is Literal:
+        args = get_args(annotation)
+        return " | ".join(repr(a) for a in args)
+
     # Handle List, Dict, etc.
     if origin is list:
         args = get_args(annotation)
@@ -192,10 +197,11 @@ def _generate_template_value(field_annotation: Any, field_description: str | Non
     if isinstance(field_annotation, type) and issubclass(field_annotation, BaseModel):
         return generate_json_template_dict(field_annotation)
     
-    # Use description if available, otherwise type name
+    # Always include type; append description when present
+    type_str = _get_type_name(field_annotation)
     if field_description:
-        return field_description
-    return f"<{_get_type_name(field_annotation)}>"
+        return f"<{type_str}> {field_description}"
+    return f"<{type_str}>"
 
 
 def generate_json_template_dict(model: Type[BaseModel]) -> dict:

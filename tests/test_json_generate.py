@@ -10,7 +10,7 @@ import json
 # Add the parent directory to sys.path so we can import waveassist
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Literal
 from pydantic import BaseModel, Field
 from waveassist.utils import (
     create_json_prompt,
@@ -96,6 +96,14 @@ class ComplexModel(BaseModel):
     items: List[OrderItem] = Field(description="Order items")
 
 
+class ModelWithLiteral(BaseModel):
+    """Model with Literal field (status) and description."""
+    status: Literal["ready", "clarify"] = Field(
+        description="ready when all data is collected; clarify when missing."
+    )
+    kind: Literal["input", "output"] = Field(description="Field kind")
+
+
 # ==================== TESTS FOR generate_json_template_dict ====================
 
 def test_simple_model_template():
@@ -117,12 +125,12 @@ def test_simple_model_template():
 
 
 def test_model_with_descriptions():
-    """Test that descriptions are used instead of type placeholders."""
+    """Test that type and description are both included (type first)."""
     result = generate_json_template_dict(ModelWithDescriptions)
     
-    assert result["title"] == "The title of the item"
-    assert result["count"] == "Number of items"
-    assert result["price"] == "Price in USD"
+    assert result["title"] == "<str> The title of the item"
+    assert result["count"] == "<int> Number of items"
+    assert result["price"] == "<float> Price in USD"
     
     print("✅ test_model_with_descriptions passed")
 
@@ -165,7 +173,7 @@ def test_nested_model():
     assert isinstance(result["address"], dict)
     assert result["address"]["street"] == "<str>"
     assert result["address"]["city"] == "<str>"
-    assert result["address"]["zip_code"] == "Postal code"  # Uses description
+    assert result["address"]["zip_code"] == "<str> Postal code"  # Type + description
     
     print("✅ test_nested_model passed")
 
@@ -206,7 +214,7 @@ def test_complex_model():
     """Test template generation for complex model with various types."""
     result = generate_json_template_dict(ComplexModel)
     
-    assert result["id"] == "Unique identifier"  # Uses description
+    assert result["id"] == "<str> Unique identifier"  # Type + description
     assert result["name"] == "<str>"
     # List types show structure, not description (more informative)
     assert result["tags"] == ["<str>"]  # Shows list structure
@@ -248,6 +256,28 @@ def test_generate_json_template_nested():
     assert "street" in parsed["address"]
     
     print("✅ test_generate_json_template_nested passed")
+
+
+def test_template_includes_type_with_description():
+    """Test that template values include type even when description exists."""
+    result = generate_json_template_dict(ModelWithDescriptions)
+    for key in ("title", "count", "price"):
+        val = result[key]
+        assert val.startswith("<"), f"Expected type prefix for {key}, got {val!r}"
+        assert "str" in val or "int" in val or "float" in val
+        assert "title" in val or "item" in val.lower() or "USD" in val
+    print("✅ test_template_includes_type_with_description passed")
+
+
+def test_literal_shows_allowed_values():
+    """Test that Literal fields show allowed values and description in template."""
+    result = generate_json_template_dict(ModelWithLiteral)
+    # Literal["ready", "clarify"] -> 'ready' | 'clarify' in type
+    assert "ready" in result["status"] and "clarify" in result["status"]
+    assert "ready when all data" in result["status"] or "clarify" in result["status"]
+    assert "input" in result["kind"] and "output" in result["kind"]
+    assert "Field kind" in result["kind"]
+    print("✅ test_literal_shows_allowed_values passed")
 
 
 # ==================== TESTS FOR create_json_prompt ====================
@@ -314,6 +344,8 @@ if __name__ == "__main__":
     print("="*60)
     test_generate_json_template_is_valid_json()
     test_generate_json_template_nested()
+    test_template_includes_type_with_description()
+    test_literal_shows_allowed_values()
     
     print("\n" + "="*60)
     print("Testing create_json_prompt")
