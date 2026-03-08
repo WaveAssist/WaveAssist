@@ -6,7 +6,7 @@ import time
 from datetime import datetime
 from typing import Type, TypeVar, get_origin, get_args, Any, Union, Literal
 from pydantic import BaseModel
-from waveassist.constants import API_BASE_URL, DASHBOARD_URL
+from waveassist.constants import API_BASE_URL
 
 logger = logging.getLogger("waveassist")
 
@@ -63,69 +63,6 @@ def call_get_api(path, params) -> tuple:
         return False, str(e)
 
 
-
-def get_email_template_credits_limit_reached(
-    assistant_name: str,
-    required_credits: float,
-    credits_remaining: float
-) -> str:
-    return f"""
-        <html>
-        <head>
-            <style>
-                body {{ font-family: 'Helvetica Neue', Arial, sans-serif; color: #333; margin: 20px; }}
-                .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
-                .header {{ background-color: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px; }}
-                .content {{ background-color: #fff; padding: 20px; border: 1px solid #ddd; border-radius: 8px; }}
-                .notice {{ border: 1px solid #ddd; color: #333; padding: 15px; border-radius: 5px; margin: 15px 0; }}
-                .dashboard-button {{ display: inline-block; background-color: #428d4f; color: white !important; padding: 12px 24px; text-decoration: none; border-radius: 5px; margin: 15px 0; }}
-                .dashboard-button:hover {{ background-color: #2d5a2d; color: white !important; }}
-                .dashboard-button:visited {{ color: white !important; }}
-                .dashboard-button:link {{ color: white !important; }}
-                a.dashboard-button {{ color: white !important; }}
-                a.dashboard-button:visited {{ color: white !important; }}
-                a.dashboard-button:link {{ color: white !important; }}
-                a.dashboard-button:hover {{ color: white !important; }}
-                .footer {{ font-size: 12px; color: #888; margin-top: 30px; text-align: center; }}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <div class="header">
-                    <h1>{assistant_name}: Credit Limit Reached</h1>
-                    <p><strong>Generated:</strong> {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p>
-                </div>
-                <div class="content">
-                    <div class="notice">
-                        <h3>Operation Unavailable - Credit Limit Reached</h3>
-                        <p>We were unable to proceed with your requested operation because your API credits have been fully utilized.</p>
-                        <p><strong>Credit Details:</strong></p>
-                        <ul>
-                            <li>Credits Required: {required_credits}</li>
-                            <li>Credits Remaining: {credits_remaining}</li>
-                        </ul>
-                        <p><strong>To continue using {assistant_name}:</strong></p>
-                        <ul>
-                            <li>Check your current credit balance</li>
-                            <li>Purchase additional credits if needed</li>
-                            <li>Review your usage patterns</li>
-                        </ul>
-                        <a href="{DASHBOARD_URL}" class="dashboard-button">View Dashboard & Check Credits</a>
-                    </div>
-                    <p><strong>Need help?</strong></p>
-                    <ul>
-                        <li>Contact support for credit-related questions</li>
-                        <li>Review your subscription plan</li>
-                        <li>Check our pricing page for credit packages</li>
-                    </ul>
-                </div>
-                <div class="footer">
-                    © {datetime.now().year} {assistant_name} | Powered by WaveAssist.
-                </div>
-            </div>
-        </body>
-        </html>
-        """
 
 
 def _get_type_name(annotation: Any) -> str:

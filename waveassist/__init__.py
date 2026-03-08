@@ -464,12 +464,17 @@ def check_credits_and_notify(
         raise RuntimeError(f"Failed to check credits: {response}")
 
     data = response.get("data", {})
-    credits_available = data.get("credits_available", True)
+
+    if "credits_available" not in data:
+        raise RuntimeError("Unexpected response from credits check — 'credits_available' missing.")
+
+    credits_available = data["credits_available"]
+    credits_remaining = data.get("credits_remaining", 0)
 
     if not credits_available:
-        logger.warning("Insufficient credits. Required: %s, Remaining: %s", required_credits, data.get("credits_remaining", 0))
+        logger.warning("[%s] Insufficient credits. Required: %s, Remaining: %s", assistant_name, required_credits, credits_remaining)
     else:
-        logger.info("Sufficient credits available. Required: %s, Remaining: %s", required_credits, data.get("credits_remaining", 0))
+        logger.info("[%s] Sufficient credits available. Required: %s, Remaining: %s", assistant_name, required_credits, credits_remaining)
 
     return credits_available
 
