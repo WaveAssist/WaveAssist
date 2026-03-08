@@ -29,7 +29,6 @@ from waveassist.utils import (
     call_post_api_with_files,
     create_json_prompt,
     parse_json_response,
-    get_email_template_credits_limit_reached,
 )
 
 logger = logging.getLogger("waveassist")
@@ -443,55 +442,36 @@ def check_credits_and_notify(
     assistant_name: str,
 ) -> bool:
     """
-    Check OpenRouter credits and send an email notification if insufficient credits are available.
+    Check OpenRouter credits via account-level cache and send a one-time notification
+    email if insufficient credits are available. Email is sent server-side.
     """
     if not _config.LOGIN_TOKEN or not _config.PROJECT_KEY:
         raise RuntimeError(
             "WaveAssist is not initialized. Please call waveassist.init(...) first."
         )
 
-    # Fetch current credit balance
-    credits_data = fetch_openrouter_credits()
+    success, response = call_post_api(
+        "sdk/check_account_credits/",
+        {
+            "uid": _config.LOGIN_TOKEN,
+            "project_key": _config.PROJECT_KEY,
+            "required_credits": required_credits,
+            "assistant_name": assistant_name,
+        },
+    )
 
-    # Check if the API call failed (empty dict or missing key)
-    if not credits_data or "limit_remaining" not in credits_data:
-        raise RuntimeError("Failed to fetch OpenRouter credits. Unable to determine credit balance.")
-    
-    credits_remaining = float(credits_data.get("limit_remaining", 0))
-    
-    # Check if sufficient credits are available
-    if required_credits > credits_remaining:
-        # Fetch current failure count
-        failure_count = int(fetch_data("failure_count") or 0)
-        
-        # Only send email if we haven't sent it 3 times already
-        if failure_count < 3:
-            # Generate email content using template from constants
-            html_content = get_email_template_credits_limit_reached(
-                assistant_name=assistant_name,
-                required_credits=required_credits,
-                credits_remaining=credits_remaining
-            )
-            
-            # Generate email subject
-            logger.warning("Insufficient credits. Sending notification email.")
-            email_subject = f"{assistant_name} - Unavailable - Credit Limit Reached"
-            send_email(subject=email_subject, html_content=html_content)
-            
-            # Increment and store failure count
-            failure_count += 1
-            store_data('failure_count', str(failure_count))
-        else:
-            logger.warning("Insufficient credits. Email notification limit reached (3 emails already sent).")
-        
-        store_data('credits_available', "0") # Set credits_available to 0 to prevent further operations
-        
-        return False
+    if not success:
+        raise RuntimeError(f"Failed to check credits: {response}")
+
+    data = response.get("data", {})
+    credits_available = data.get("credits_available", True)
+
+    if not credits_available:
+        logger.warning("Insufficient credits. Required: %s, Remaining: %s", required_credits, data.get("credits_remaining", 0))
     else:
-        logger.info("Sufficient credits available. Required: %s, Remaining: %s", required_credits, credits_remaining)
-        store_data('credits_available', "1") # Set credits_available to 1 to allow further operations
-        store_data('failure_count', "0") # Reset failure count on success
-        return True
+        logger.info("Sufficient credits available. Required: %s, Remaining: %s", required_credits, data.get("credits_remaining", 0))
+
+    return credits_available
 
 
 def call_llm(
