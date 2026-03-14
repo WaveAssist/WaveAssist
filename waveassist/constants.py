@@ -1,7 +1,6 @@
 import os
 
-# API_BASE_URL = os.getenv("WAVEASSIST_API_BASE_URL", "https://api.waveassist.io")
-API_BASE_URL = os.getenv("WAVEASSIST_API_BASE_URL", "http://localhost:8000")
+API_BASE_URL = os.getenv("WAVEASSIST_API_BASE_URL", "https://api.waveassist.io")
 OPENROUTER_URL = "https://openrouter.ai/api/v1"
 DASHBOARD_URL = "https://app.waveassist.io"
 OPENROUTER_API_STORED_DATA_KEY = "open_router_key"
