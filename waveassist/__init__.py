@@ -39,6 +39,7 @@ __all__ = [
     "set_default_environment_key",
     "store_data",
     "fetch_data",
+    "publish_dashboard",
     "send_email",
     "fetch_openrouter_credits",
     "check_credits_and_notify",
@@ -319,6 +320,56 @@ def fetch_data(
             return default
     except (TypeError, ValueError):
         return default
+
+def publish_dashboard(
+    html_content: str,
+    data_key: str = "dashboard_html",
+    run_based: bool = False,
+) -> Optional[str]:
+    """
+    Store an HTML dashboard and return a public shareable URL.
+
+    Args:
+        html_content: Full HTML string for the dashboard page.
+        data_key: Storage key (default "dashboard_html").
+        run_based: If True, scope to the current run_id.
+
+    Returns:
+        The public URL string, or None on failure.
+    """
+    if not _config.LOGIN_TOKEN or not _config.PROJECT_KEY:
+        raise RuntimeError(
+            "WaveAssist is not initialized. Please call waveassist.init(...) first."
+        )
+
+    stored = store_data(data_key, html_content, run_based=run_based, data_type="string")
+    if not stored:
+        logger.error("publish_dashboard: failed to store HTML content.")
+        return None
+
+    payload = {
+        "uid": _config.LOGIN_TOKEN,
+        "project_key": _config.PROJECT_KEY,
+        "environment_key": _config.ENVIRONMENT_KEY,
+        "data_key": data_key,
+        "run_based": "1" if run_based else "0",
+    }
+    if run_based and _config.RUN_ID:
+        payload["run_id"] = str(_config.RUN_ID)
+
+    success, response = call_post_api("dashboard/generate_link/", payload)
+    if not success:
+        logger.error("publish_dashboard: failed to generate link — %s", response)
+        return None
+
+    token = response.get("data", {}).get("token") if isinstance(response, dict) else None
+    if not token:
+        logger.error("publish_dashboard: no token in response.")
+        return None
+
+    from waveassist.constants import API_BASE_URL
+    return f"{API_BASE_URL}/d/{token}/"
+
 
 # Email validation limits
 _SEND_EMAIL_SUBJECT_MAX_LENGTH = 500

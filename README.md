@@ -11,6 +11,7 @@ WaveAssist SDK makes it simple to store and retrieve data in your automation wor
 - 📦 Store and retrieve data (DataFrames, JSON, strings)
 - 🧠 LLM-friendly function names (`init`, `store_data`, `fetch_data`)
 - 📁 Auto-serialization for common Python objects
+- 📊 Publish HTML dashboards with shareable public URLs
 - 🤖 LLM integration with structured outputs via Instructor and OpenRouter
 - 💳 Credit management and automatic email notifications
 - 🖥️ Command-line interface for project management
@@ -151,7 +152,51 @@ waveassist.send_email(
 
 ---
 
-### 6. Check Credits and Notify
+### 6. Publish an HTML Dashboard
+
+Generate a shareable public URL for an HTML dashboard. Anyone with the link can view it — no login required.
+
+```python
+import waveassist
+
+waveassist.init()
+
+html = """
+<html>
+<head><title>Weekly Report</title></head>
+<body>
+  <h1>Sales Summary</h1>
+  <p>Total revenue: $12,340</p>
+</body>
+</html>
+"""
+
+# Publish and get a shareable URL
+url = waveassist.publish_dashboard(html)
+print(url)  # https://api.waveassist.io/d/a3f8c2d19e7b4f2ab5c8.../
+
+# Email the link to yourself
+waveassist.send_email(
+    subject="Your Dashboard is Ready",
+    html_content=f'<p>View your dashboard: <a href="{url}">{url}</a></p>'
+)
+```
+
+**Static vs Per-Run Dashboards:**
+
+```python
+# Static — same data_key, URL always shows the latest content
+url = waveassist.publish_dashboard(html, data_key="weekly_report")
+
+# Per-run — each run gets its own unique dashboard URL
+url = waveassist.publish_dashboard(html, run_based=True)
+```
+
+**Parameters:** `publish_dashboard(html_content, data_key="dashboard_html", run_based=False)`. Returns the public URL string, or `None` on failure.
+
+---
+
+### 7. Check Credits and Notify
 
 Check OpenRouter credits and automatically send email notifications if insufficient credits are available:
 
@@ -179,7 +224,7 @@ else:
 
 ---
 
-### 7. Call LLM with Structured Outputs
+### 8. Call LLM with Structured Outputs
 
 Get structured responses from LLMs via OpenRouter with Pydantic models:
 
@@ -301,8 +346,8 @@ python tests/test_json_extract.py
 ```
 WaveAssist/
 ├── waveassist/
-│   ├── __init__.py          # Public API: init(), store_data(), fetch_data(), send_email(),
-│   │                         # check_credits_and_notify(), call_llm()
+│   ├── __init__.py          # Public API: init(), store_data(), fetch_data(), publish_dashboard(),
+│   │                         # send_email(), check_credits_and_notify(), call_llm()
 │   ├── _config.py            # Global config and version
 │   ├── constants.py         # API_BASE_URL, OpenRouter, dashboard URLs
 │   ├── utils.py             # API helpers, JSON parsing, soft_parse, exception classes
@@ -391,4 +436,4 @@ Need help or have feedback? Reach out at [connect@waveassist.io](mailto:connect@
 
 ---
 
-© 2025 [WaveAssist](https://waveassist.io)
+© 2026 [WaveAssist](https://waveassist.io)
