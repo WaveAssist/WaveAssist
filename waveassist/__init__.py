@@ -4,6 +4,7 @@ import pandas as pd
 import time
 import json
 import os
+import subprocess
 from dotenv import load_dotenv
 from typing import Type, TypeVar, Literal, Optional, Any, BinaryIO
 from pydantic import BaseModel
@@ -285,15 +286,15 @@ def fetch_data(
     if not success:
         return default
 
-    # Extract stored format and already-deserialized data
-    data_type = response.get("data_type")
-    data = response.get("data")
-
-    # Missing or null data
-    if data is None and data_type is None:
-        return default
-
     try:
+        # Extract stored format and already-deserialized data
+        data_type = response.get("data_type")
+        data = response.get("data")
+
+        # Missing or null data
+        if data is None and data_type is None:
+            return default
+
         if data_type == "dataframe":
             if data is None:
                 return default
@@ -318,7 +319,8 @@ def fetch_data(
         else:
             logger.warning("Unsupported data_type: %s", data_type)
             return default
-    except (TypeError, ValueError):
+    except Exception:
+        logger.error("fetch_data: unexpected error deserializing key '%s'", key, exc_info=True)
         return default
 
 def publish_dashboard(
@@ -530,6 +532,70 @@ def check_credits_and_notify(
     return credits_available
 
 
+def _resolve_claude_cli_model(model: str) -> str:
+    """
+    Map an OpenRouter/generic model name to a Claude CLI compatible model.
+
+    Conversion: strip provider prefix, replace '.' with '-'.
+    e.g. anthropic/claude-sonnet-4.6 → claude-sonnet-4-6
+    """
+    # Env var override takes highest priority
+    env_model = os.environ.get("CLAUDE_CLI_MODEL")
+    if env_model:
+        return env_model
+
+    # Strip provider prefix (e.g. "anthropic/claude-sonnet-4.6" → "claude-sonnet-4.6")
+    if "/" in model:
+        model = model.rsplit("/", 1)[1]
+
+    # Not a Claude model — can't convert
+    if not model.startswith("claude"):
+        raise ValueError(
+            f"Claude CLI: non-Claude model '{model}' cannot be auto-converted. "
+            f"Set CLAUDE_CLI_MODEL env var to specify a Claude model explicitly."
+        )
+
+    # Replace dots with hyphens (OpenRouter uses dots, CLI uses hyphens)
+    # e.g. claude-sonnet-4.6 → claude-sonnet-4-6
+    return model.replace(".", "-")
+
+
+def _call_llm_claude_cli(
+    model: str,
+    prompt: str,
+    response_model: Type[T],
+    **kwargs
+) -> T:
+    """
+    Dev/testing alternative to call_llm that routes through the Claude CLI.
+    Uses the local Claude Max subscription — no API credits needed.
+    Activated by setting LLM_PROVIDER=claude_cli in environment.
+
+    Note: Claude CLI does not support temperature, top_p, or other sampling
+    kwargs. Only model, prompt, and response structure are passed through.
+    """
+    resolved_model = _resolve_claude_cli_model(model)
+    json_prompt = create_json_prompt(prompt, response_model)
+
+    cmd = [
+        "claude", "-p", json_prompt,
+        "--output-format", "json",
+        "--model", resolved_model,
+        "--max-turns", "1",
+    ]
+
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+
+    if result.returncode != 0:
+        raise RuntimeError(f"Claude CLI failed: {result.stderr}")
+
+    # --output-format json wraps response in {"result": "...", ...}
+    cli_output = json.loads(result.stdout)
+    content = cli_output.get("result", result.stdout.strip())
+
+    return parse_json_response(content, response_model, model)
+
+
 def call_llm(
     model: str,
     prompt: str,
@@ -571,6 +637,10 @@ def call_llm(
             max_tokens=3000,
             extra_body={"web_search_options": {"search_context_size": "medium"}})
     """
+    # Route to Claude CLI for local testing (no API credits)
+    if os.environ.get("LLM_PROVIDER") == "claude_cli":
+        return _call_llm_claude_cli(model, prompt, response_model, **kwargs)
+
     if not _config.LOGIN_TOKEN or not _config.PROJECT_KEY:
         raise RuntimeError(
             "WaveAssist is not initialized. Please call waveassist.init(...) first."

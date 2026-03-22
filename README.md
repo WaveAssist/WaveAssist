@@ -274,6 +274,17 @@ result = waveassist.call_llm(
 
 **Errors:** `RuntimeError` (API/network failure), `ValueError` (invalid or non-JSON response). Transport errors are retried once automatically.
 
+#### Local Testing with Claude CLI
+
+Route `call_llm` through the [Claude Code CLI](https://claude.com/claude-code) for free local testing — no OpenRouter credits needed. Requires `claude` CLI installed and authenticated (works with Claude Max, Pro, or an Anthropic API key).
+
+```env
+LLM_PROVIDER=claude_cli        # activates CLI routing
+CLAUDE_CLI_MODEL=claude-sonnet-4-6  # optional: pin a specific model
+```
+
+No code changes needed — OpenRouter model names (e.g. `anthropic/claude-sonnet-4.6`) are auto-converted. Non-Claude models require `CLAUDE_CLI_MODEL` to be set. Unset `LLM_PROVIDER` to switch back to OpenRouter.
+
 ---
 
 ## 🖥️ Command Line Interface
@@ -338,6 +349,7 @@ python tests/test_json_extract.py
 - JSON extraction from various formats (pure JSON, markdown code blocks, embedded text)
 - Soft parsing with missing required fields (safety fallback for LLM responses)
 - Type coercion and nested model handling
+- **Resilience / never-crash tests** (`test_never_crash.py`): 45 tests ensuring `fetch_data`, `store_data`, `send_email`, `publish_dashboard`, and `fetch_openrouter_credits` never throw unhandled exceptions — they return defaults (`default`, `False`, `None`, `{}`) on garbage inputs, corrupted API responses, and network failures
 
 ---
 
@@ -357,7 +369,8 @@ WaveAssist/
 │   ├── test_core.py         # Core SDK + send_email tests
 │   ├── test_json_generate.py # JSON template generation tests
 │   ├── test_json_extract.py  # JSON extraction/parsing tests
-│   └── test_llm_call.py     # call_llm integration tests (skipped without API key)
+│   ├── test_llm_call.py     # call_llm integration tests (skipped without API key)
+│   └── test_never_crash.py  # Resilience tests: no SDK function crashes on bad input
 ```
 
 ---
@@ -369,6 +382,19 @@ WaveAssist/
 - `fetch_data()` returns the correct Python type and supports a `default` when the key is missing or the API fails
 - **Logging:** The SDK uses the standard library `logging` module (logger name `"waveassist"`). Configure level or handlers to control or suppress SDK messages (e.g. `logging.getLogger("waveassist").setLevel(logging.WARNING)`).
 - **Errors:** The SDK raises standard exceptions: **`ValueError`** for bad or missing input (e.g. missing uid/project_key in init, email validation, OpenRouter key not found, LLM JSON/format failure) and **`RuntimeError`** for invalid state or API failures (e.g. not initialized, credits not available, send email failed, LLM API/network failure). Catch `ValueError` or `RuntimeError` (or `Exception`) as needed.
+
+**Failure behavior per function:**
+
+| Function | On failure | Never crashes? |
+|---|---|---|
+| `fetch_data()` | Returns `default` (default `None`) on any failure — bad API response, corrupted data, network error | Yes |
+| `store_data()` | Returns `False` on API failure; falls back to string serialization for non-serializable data | Yes |
+| `send_email(raise_on_failure=False)` | Returns `False` on validation errors, API failures, or bad attachments | Yes |
+| `send_email(raise_on_failure=True)` | Raises `ValueError` (validation) or `RuntimeError` (API failure) | Raises on purpose |
+| `publish_dashboard()` | Returns `None` on store or API failure | Yes |
+| `fetch_openrouter_credits()` | Returns `{}` on API failure | Yes |
+| `check_credits_and_notify()` | Raises `RuntimeError` if API fails or response is malformed | Raises on purpose |
+| `call_llm()` | Raises `RuntimeError` (network) or `ValueError` (bad JSON) after 1 auto-retry | Raises on purpose |
 
 ---
 
