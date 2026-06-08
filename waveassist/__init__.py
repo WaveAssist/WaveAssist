@@ -24,6 +24,11 @@ from waveassist.constants import (
     OPENROUTER_URL,
     OPENROUTER_API_STORED_DATA_KEY,
     UNSUPPORTED_JSON_MODELS_ARRAY,
+    LLM_PROVIDER_STORED_DATA_KEY,
+    AZURE_OPENAI_CONFIG_STORED_DATA_KEY,
+    PROVIDER_OPENROUTER,
+    PROVIDER_AZURE,
+    PROVIDER_CLAUDE_CLI,
 )
 from waveassist.utils import (
     call_post_api,
@@ -46,7 +51,6 @@ __all__ = [
     "fetch_openrouter_credits",
     "check_credits_and_notify",
     "call_llm",
-    "call_tool",
     "is_test_run",
     "StoreDataType",
 ]
@@ -599,6 +603,53 @@ def _call_llm_claude_cli(
     return parse_json_response(content, response_model, model)
 
 
+def _resolve_llm_provider() -> str:
+    """Resolve the active LLM provider.
+
+    Precedence: LLM_PROVIDER env var (dev override) > server-stored
+    'llm_provider' value > default OpenRouter.
+    """
+    provider = (
+        os.environ.get("LLM_PROVIDER")
+        or fetch_data(LLM_PROVIDER_STORED_DATA_KEY)
+        or PROVIDER_OPENROUTER
+    )
+    return str(provider).strip().lower()
+
+
+def _resolve_llm_client(provider: str, kwargs: dict) -> OpenAI:
+    """Build the OpenAI-compatible client for a hosted provider.
+
+    Handles 'azure' and 'openrouter' (the default). Mutates kwargs in place for
+    provider-specific quirks. The 'claude_cli' provider is handled separately in
+    call_llm and never reaches here.
+    """
+    if provider == PROVIDER_AZURE:
+        config = fetch_data(AZURE_OPENAI_CONFIG_STORED_DATA_KEY)
+        # fetch_data may wrap a stored value in a list; unwrap to the dict.
+        if isinstance(config, list):
+            config = config[0] if config else None
+        if not isinstance(config, dict) or not config.get("api_key") or not config.get("endpoint"):
+            raise ValueError(
+                "Azure OpenAI config not found or incomplete. Please store it using "
+                "waveassist.store_data('azure_openai_config', "
+                "{'api_key': '...', 'endpoint': 'https://<resource>.openai.azure.com/'})"
+            )
+        base_url = config["endpoint"].rstrip("/") + "/openai/v1/"
+        # Newer Azure models require max_completion_tokens instead of max_tokens.
+        if "max_tokens" in kwargs and "max_completion_tokens" not in kwargs:
+            kwargs["max_completion_tokens"] = kwargs.pop("max_tokens")
+        return OpenAI(api_key=config["api_key"], base_url=base_url)
+
+    # Default: OpenRouter
+    api_key = fetch_data(OPENROUTER_API_STORED_DATA_KEY)
+    if not api_key:
+        raise ValueError(
+            "OpenRouter API key not found. Please store it using waveassist.store_data('open_router_key', 'your_api_key')"
+        )
+    return OpenAI(api_key=api_key, base_url=OPENROUTER_URL)
+
+
 def call_llm(
     model: str,
     prompt: str,
@@ -640,8 +691,9 @@ def call_llm(
             max_tokens=3000,
             extra_body={"web_search_options": {"search_context_size": "medium"}})
     """
-    # Route to Claude CLI for local testing (no API credits)
-    if os.environ.get("LLM_PROVIDER") == "claude_cli":
+    # Resolve provider: Claude CLI (local) routes before the init/network checks.
+    provider = _resolve_llm_provider()
+    if provider == PROVIDER_CLAUDE_CLI:
         return _call_llm_claude_cli(model, prompt, response_model, **kwargs)
 
     if not _config.LOGIN_TOKEN or not _config.PROJECT_KEY:
@@ -649,19 +701,9 @@ def call_llm(
             "WaveAssist is not initialized. Please call waveassist.init(...) first."
         )
 
-    # Fetch API key from WaveAssist data storage
-    api_key = fetch_data(OPENROUTER_API_STORED_DATA_KEY)
-    if not api_key:
-        raise ValueError(
-            "OpenRouter API key not found. Please store it using waveassist.store_data('open_router_key', 'your_api_key')"
-        )
-    
-    # Initialize OpenAI client with OpenRouter
-    client = OpenAI(
-        api_key=api_key,
-        base_url=OPENROUTER_URL
-    )
-    
+    # Build the OpenAI-compatible client for the configured hosted provider.
+    client = _resolve_llm_client(provider, kwargs)
+
     # Create prompt with JSON structure instructions
     json_prompt = create_json_prompt(prompt, response_model)
     
@@ -758,95 +800,3 @@ def is_test_run() -> bool:
     if flag is None:
         return False
     return bool(flag)
-
-
-def call_tool(action_slug: str, arguments: Optional[dict] = None) -> dict:
-    """
-    Execute a Composio-backed tool action via the WaveAssist backend.
-
-    Writes are auto-gated when is_test_run() is True: the call does NOT hit
-    the external provider. Instead, the intended call is stored under a
-    generated `test_preview_*` key so the dashboard can show it.
-
-    Args:
-        action_slug: The Composio action slug (e.g. "GMAIL_SEND_EMAIL").
-        arguments: Dict of action arguments per its input schema.
-
-    Returns:
-        dict with shape:
-          - real run / read:    {"test_preview": False, "result": <raw provider response>}
-          - test-run + write:   {"test_preview": True, "key": "test_preview_<slug>_<id>",
-                                  "action_slug": ..., "arguments": ...}
-
-    Raises:
-        RuntimeError: If SDK not initialized or the backend returns an error envelope.
-    """
-    if not _config.LOGIN_TOKEN or not _config.PROJECT_KEY:
-        raise RuntimeError(
-            "WaveAssist is not initialized. Please call waveassist.init(...) first."
-        )
-    if not action_slug or not isinstance(action_slug, str):
-        raise ValueError("action_slug must be a non-empty string")
-    if arguments is None:
-        arguments = {}
-    if not isinstance(arguments, dict):
-        raise ValueError("arguments must be a dict")
-
-    test_run = is_test_run()
-
-    payload = {
-        "uid": _config.LOGIN_TOKEN,
-        "project_key": _config.PROJECT_KEY,
-        "action_slug": action_slug,
-        "arguments": json.dumps(arguments),
-        "is_test_run": "true" if test_run else "false",
-    }
-
-    path = "api/v1/tools/execute"
-    max_attempts = 2
-    last_err = None
-    response = None
-    success = False
-
-    for attempt in range(max_attempts):
-        success, response = call_post_api(path, payload)
-        if success:
-            break
-        last_err = response if isinstance(response, str) else str(response)
-        if attempt < max_attempts - 1:
-            time.sleep(2 ** attempt)
-
-    if not success:
-        raise RuntimeError(f"call_tool transport failure: {last_err}")
-
-    # Envelope: {"success": "0"|"1", "data": ..., "message": ..., "status": ...}
-    if not isinstance(response, dict) or response.get("success") != "1":
-        msg = (response or {}).get("message", "call_tool failed") if isinstance(response, dict) else str(response)
-        raise RuntimeError(f"call_tool failed ({action_slug}): {msg}")
-
-    data = response.get("data") or {}
-
-    # Gated write — persist a record and return a stable reference
-    if data.get("test_preview"):
-        preview_key = f"test_preview_{action_slug}_{uuid.uuid4().hex[:8]}"
-        preview_record = {
-            "action_slug": action_slug,
-            "toolkit_slug": data.get("toolkit_slug"),
-            "arguments": data.get("arguments") or arguments,
-            "ts": datetime.utcnow().isoformat() + "Z",
-        }
-        try:
-            store_data(preview_key, preview_record, data_type="json")
-        except Exception as e:
-            logger.warning("call_tool: failed to store preview for %s: %s", action_slug, e)
-        return {
-            "test_preview": True,
-            "key": preview_key,
-            "action_slug": action_slug,
-            "arguments": preview_record["arguments"],
-        }
-
-    return {
-        "test_preview": False,
-        "result": data.get("result"),
-    }

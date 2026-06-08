@@ -15,19 +15,16 @@ from waveassist import init, call_llm
 from waveassist import _config
 from waveassist.constants import OPENROUTER_API_STORED_DATA_KEY
 
-# Mock fetch_data to return API key directly
-original_fetch_data = None
+# Mock fetch_data to return the API key directly. The patch is applied per-test
+# via the autouse fixture below (pytest) and manually in __main__ (script mode),
+# so it never leaks into other test modules.
+import waveassist
 
 def mock_fetch_data(key: str):
     """Mock fetch_data to return API key when requested."""
     if key == OPENROUTER_API_STORED_DATA_KEY:
         return mock_fetch_data.api_key
     return None
-
-# Patch fetch_data
-import waveassist
-original_fetch_data = waveassist.fetch_data
-waveassist.fetch_data = mock_fetch_data
 
 # Pydantic models for response structure
 class User(BaseModel):
@@ -49,6 +46,14 @@ models_list = [
 PROMPT = "Format the users into name and age. Users: John, 25 years old and Jane, 30 years old"
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _patch_fetch_data(monkeypatch):
+    """Patch waveassist.fetch_data for each test, then auto-restore so the mock
+    does not leak into other test modules."""
+    monkeypatch.setattr(waveassist, "fetch_data", mock_fetch_data)
+
 
 def get_api_key(api_key_param: str = None) -> str:
     """Get OpenRouter API key from parameter, environment, or skip if headless."""
@@ -124,9 +129,10 @@ if __name__ == "__main__":
         print("   Set OPENROUTER_API_KEY env var or pass --api-key parameter\n")
         exit(0)
     
-    # Set API key in mock
+    # Set API key in mock and apply the patch (script mode has no fixtures)
     mock_fetch_data.api_key = api_key
-    
+    waveassist.fetch_data = mock_fetch_data
+
     # Initialize with dummy credentials
     _config.LOGIN_TOKEN = "test-token"
     _config.PROJECT_KEY = "test-project"
