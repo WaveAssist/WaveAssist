@@ -385,19 +385,49 @@ _SEND_EMAIL_SUBJECT_MAX_LENGTH = 500
 _SEND_EMAIL_HTML_MAX_LENGTH = 5_000_000
 
 
+def _normalize_recipients(value) -> list:
+    """Coerce a str | list[str] of recipients into a clean, order-preserving, deduped list.
+
+    Strips whitespace, drops blanks/None, and removes case-insensitive duplicates. Format
+    validation is intentionally left to the backend (which validates every address)."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        value = [value]
+    out, seen = [], set()
+    for item in value:
+        if item is None:
+            continue
+        addr = str(item).strip()
+        if not addr:
+            continue
+        if addr.lower() in seen:
+            continue
+        seen.add(addr.lower())
+        out.append(addr)
+    return out
+
+
 def send_email(
     subject: str,
     html_content: str,
     attachment_file: Optional[BinaryIO] = None,
+    cc=None,
+    bcc=None,
     raise_on_failure: bool = True,
 ) -> bool:
     """
     Send an email with optional attachment via the WaveAssist backend.
 
+    The primary recipient is always the account owner. Use ``cc``/``bcc`` to copy
+    additional recipients (e.g. a per-group digest); ``bcc`` keeps addresses private.
+
     Args:
         subject: Email subject (non-empty, max 500 chars).
         html_content: HTML body (non-empty, max 5M chars).
         attachment_file: Optional file-like object with .read() and optional .name.
+        cc: Optional additional recipient(s), str or list of str (visible to all).
+        bcc: Optional additional recipient(s), str or list of str (hidden from others).
         raise_on_failure: If True, raise ValueError/RuntimeError on validation or API failure.
 
     Returns:
@@ -460,6 +490,15 @@ def send_email(
         "subject": subject_clean,
         "html_content": html_clean,
     }
+
+    # Optional carbon-copy recipients; omit the keys entirely when none are given so the
+    # backend's owner-only default path is unchanged.
+    cc_list = _normalize_recipients(cc)
+    if cc_list:
+        data["cc"] = ",".join(cc_list)
+    bcc_list = _normalize_recipients(bcc)
+    if bcc_list:
+        data["bcc"] = ",".join(bcc_list)
 
     path = "sdk/send_email/"
     success = False

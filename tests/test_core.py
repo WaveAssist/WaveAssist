@@ -37,8 +37,14 @@ def mock_call_get_api(path, params):
     return False, {"error": "Invalid GET path"}
 
 
+# Captures the last send_email payload so tests can assert on cc/bcc handling.
+captured_email_body = {}
+
+
 def mock_call_post_api_with_files(path, body, files=None):
     if path == "sdk/send_email/":
+        captured_email_body.clear()
+        captured_email_body.update(body)
         return True, {"success": "1", "message": "ok"}
     return False, "Invalid path"
 
@@ -259,6 +265,63 @@ def test_send_email_valid_attachment_success():
     print("✅ test_send_email_valid_attachment_success passed")
 
 
+def test_send_email_no_cc_omits_fields():
+    """Backward compat: when cc/bcc aren't passed, the payload carries no cc/bcc keys."""
+    reset_state()
+    token, project_key, _ = get_test_credentials()
+    init(token, project_key)
+    assert send_email("Sub", "<p>Hi</p>") is True
+    assert "cc" not in captured_email_body
+    assert "bcc" not in captured_email_body
+    print("✅ test_send_email_no_cc_omits_fields passed")
+
+
+def test_send_email_cc_list_joined():
+    reset_state()
+    token, project_key, _ = get_test_credentials()
+    init(token, project_key)
+    assert send_email("Sub", "<p>Hi</p>", cc=["a@x.com", "b@y.com"]) is True
+    assert captured_email_body["cc"] == "a@x.com,b@y.com"
+    print("✅ test_send_email_cc_list_joined passed")
+
+
+def test_send_email_cc_string_normalized():
+    reset_state()
+    token, project_key, _ = get_test_credentials()
+    init(token, project_key)
+    assert send_email("Sub", "<p>Hi</p>", cc="a@x.com") is True
+    assert captured_email_body["cc"] == "a@x.com"
+    print("✅ test_send_email_cc_string_normalized passed")
+
+
+def test_send_email_bcc_list_joined():
+    reset_state()
+    token, project_key, _ = get_test_credentials()
+    init(token, project_key)
+    assert send_email("Sub", "<p>Hi</p>", bcc=["x@x.com", "y@y.com"]) is True
+    assert captured_email_body["bcc"] == "x@x.com,y@y.com"
+    print("✅ test_send_email_bcc_list_joined passed")
+
+
+def test_send_email_cc_dedupes_and_drops_blanks():
+    reset_state()
+    token, project_key, _ = get_test_credentials()
+    init(token, project_key)
+    assert send_email("Sub", "<p>Hi</p>", cc=["a@x.com", " a@x.com ", "", None, "b@y.com"]) is True
+    assert captured_email_body["cc"] == "a@x.com,b@y.com"
+    print("✅ test_send_email_cc_dedupes_and_drops_blanks passed")
+
+
+def test_send_email_empty_cc_omits_field():
+    """An all-blank cc collapses to nothing and is omitted, not sent as an empty string."""
+    reset_state()
+    token, project_key, _ = get_test_credentials()
+    init(token, project_key)
+    assert send_email("Sub", "<p>Hi</p>", cc=["", "  ", None]) is True
+    assert "cc" not in captured_email_body
+    print("✅ test_send_email_empty_cc_omits_field passed")
+
+
 def test_default_environment_key_used():
     reset_state()
     token, project_key, _ = get_test_credentials()
@@ -346,6 +409,12 @@ if __name__ == "__main__":
     test_send_email_without_init_raises()
     test_send_email_invalid_attachment_raises_by_default()
     test_send_email_valid_attachment_success()
+    test_send_email_no_cc_omits_fields()
+    test_send_email_cc_list_joined()
+    test_send_email_cc_string_normalized()
+    test_send_email_bcc_list_joined()
+    test_send_email_cc_dedupes_and_drops_blanks()
+    test_send_email_empty_cc_omits_field()
     test_default_environment_key_used()
     test_env_fallbacks()
     test_init_from_dotenv()
