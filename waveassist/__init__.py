@@ -11,12 +11,6 @@ from typing import Type, TypeVar, Literal, Optional, Any, BinaryIO
 from pydantic import BaseModel
 from pathlib import Path
 from openai import OpenAI
-from openai import (
-    APIError,
-    APIConnectionError,
-    RateLimitError,
-    Timeout as OpenAITimeout,
-)
 from datetime import datetime
 
 from waveassist import _config
@@ -756,11 +750,8 @@ def call_llm(
     if any(x in model.lower() for x in UNSUPPORTED_JSON_MODELS_ARRAY):
         response_format = None 
     
-    # Transport errors that should always be retried once
-    transport_errors = (APIError, APIConnectionError, RateLimitError, OpenAITimeout)
-    
     # Attempt the API call with retry logic
-    # For transport errors: always retry once (max 2 attempts total)
+    # Any API error: retry once with backoff (max 2 attempts total)
     # For format errors: retry once if should_retry=True (max 2 attempts total)
     max_attempts = 2
     format_error_retried = False
@@ -797,22 +788,16 @@ def call_llm(
                     # No retry allowed or already retried, raise the error
                     raise
                     
-        except transport_errors as e:
-            # Transport error - always retry once (unless this is already the retry)
-            if attempt < max_attempts - 1:
-                # Exponential backoff: wait 1 second, then 2 seconds
-                wait_time = 2 ** attempt
-                time.sleep(wait_time)
-                continue
-            else:
-                # Already retried, raise the error
-                raise RuntimeError(
-                    f"LLM API call failed after {max_attempts} attempts: {str(e)}"
-                ) from e
+        except ValueError:
+            # parse_json_response format error that wasn't retried above
+            raise
         except Exception as e:
-            # Other unexpected errors - don't retry
+            # Any API/network error - retry once with backoff, then raise
+            if attempt < max_attempts - 1:
+                time.sleep(2 ** attempt)
+                continue
             raise RuntimeError(
-                f"Unexpected error during LLM API call: {str(e)}"
+                f"LLM API call failed after {max_attempts} attempts: {str(e)}"
             ) from e
 
     # Should never reach here, but handle edge case

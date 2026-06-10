@@ -265,6 +265,32 @@ def test_send_email_valid_attachment_success():
     print("✅ test_send_email_valid_attachment_success passed")
 
 
+def test_call_llm_surfaces_real_error():
+    """Regression: a failing LLM call must surface the underlying error message, not a
+    TypeError from a broken except clause ('catching classes that do not inherit from
+    BaseException' — the openai.Timeout-is-not-an-exception bug shipped in 0.8.2)."""
+    reset_state()
+    token, project_key, _ = get_test_credentials()
+    init(token, project_key)
+    from unittest import mock
+    from pydantic import BaseModel
+
+    class TinyModel(BaseModel):
+        answer: str
+
+    fake_client = mock.MagicMock()
+    fake_client.chat.completions.create.side_effect = ConnectionError("the real error")
+    with mock.patch.object(waveassist, "_resolve_llm_client", return_value=fake_client):
+        try:
+            waveassist.call_llm(model="test/model", prompt="hi", response_model=TinyModel)
+            assert False, "should have raised"
+        except RuntimeError as e:
+            assert "the real error" in str(e), f"real error masked: {e}"
+        except TypeError as e:
+            assert False, f"broken except clause is back: {e}"
+    print("✅ test_call_llm_surfaces_real_error passed")
+
+
 def test_send_email_no_cc_omits_fields():
     """Backward compat: when cc/bcc aren't passed, the payload carries no cc/bcc keys."""
     reset_state()
@@ -409,6 +435,7 @@ if __name__ == "__main__":
     test_send_email_without_init_raises()
     test_send_email_invalid_attachment_raises_by_default()
     test_send_email_valid_attachment_success()
+    test_call_llm_surfaces_real_error()
     test_send_email_no_cc_omits_fields()
     test_send_email_cc_list_joined()
     test_send_email_cc_string_normalized()
