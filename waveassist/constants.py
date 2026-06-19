@@ -12,3 +12,9 @@ AZURE_OPENAI_CONFIG_STORED_DATA_KEY = "azure_openai_config"
 PROVIDER_OPENROUTER = "openrouter"
 PROVIDER_AZURE = "azure"
 PROVIDER_CLAUDE_CLI = "claude_cli"
+
+# Azure API surface, set via the "api_type" field in azure_openai_config.
+# Reasoning / "pro" models (gpt-5.x-pro, o1/o3, ...) are not exposed on
+# chat.completions and must use the Responses API.
+AZURE_API_TYPE_CHAT = "chat_completions"
+AZURE_API_TYPE_RESPONSES = "responses"

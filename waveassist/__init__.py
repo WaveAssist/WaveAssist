@@ -23,6 +23,8 @@ from waveassist.constants import (
     PROVIDER_OPENROUTER,
     PROVIDER_AZURE,
     PROVIDER_CLAUDE_CLI,
+    AZURE_API_TYPE_CHAT,
+    AZURE_API_TYPE_RESPONSES,
 )
 from waveassist.utils import (
     call_post_api,
@@ -683,6 +685,75 @@ def _resolve_llm_client(provider: str, kwargs: dict) -> OpenAI:
     return OpenAI(api_key=api_key, base_url=OPENROUTER_URL)
 
 
+def _azure_api_type(config: dict) -> str:
+    """Which Azure API surface to use for this config.
+
+    Read from the optional ``api_type`` field of ``azure_openai_config``:
+      - ``"chat_completions"`` (default) -> client.chat.completions.create
+      - ``"responses"``                  -> client.responses.parse (reasoning/pro models)
+
+    Reasoning / "pro" models (gpt-5.x-pro, o1/o3, ...) are not served on
+    chat.completions, so those deployments must set ``api_type="responses"``.
+    """
+    api_type = str(config.get("api_type") or AZURE_API_TYPE_CHAT).strip().lower()
+    if api_type not in (AZURE_API_TYPE_CHAT, AZURE_API_TYPE_RESPONSES):
+        raise ValueError(
+            f"Invalid azure_openai_config 'api_type': {api_type!r}. "
+            f"Expected '{AZURE_API_TYPE_CHAT}' or '{AZURE_API_TYPE_RESPONSES}'."
+        )
+    return api_type
+
+
+def _call_llm_responses(
+    client: OpenAI,
+    model: str,
+    prompt: str,
+    response_model: Type[T],
+    kwargs: dict,
+) -> T:
+    """Azure Responses API path for reasoning / "pro" models.
+
+    Uses strict structured outputs (``text_format=response_model``), which the
+    SDK enforces via a JSON schema and returns as an already-validated pydantic
+    object. Falls back to soft-parsing the raw text if the model returns no
+    parsed output. Transport errors are retried once, mirroring the chat path.
+    """
+    # The Responses API uses max_output_tokens; translate the chat-style args.
+    max_out = kwargs.pop("max_output_tokens", None)
+    if max_out is None:
+        max_out = kwargs.pop("max_completion_tokens", None)
+    if max_out is None:
+        max_out = kwargs.pop("max_tokens", None)
+    # response_format is a chat.completions concept; not accepted here.
+    kwargs.pop("response_format", None)
+    if max_out is not None:
+        kwargs["max_output_tokens"] = max_out
+
+    max_attempts = 2
+    for attempt in range(max_attempts):
+        try:
+            response = client.responses.parse(
+                model=model,
+                input=prompt,
+                text_format=response_model,
+                **kwargs,
+            )
+            parsed = response.output_parsed
+            if parsed is not None:
+                return parsed
+            # No structured object returned; soft-parse the text output.
+            return parse_json_response(response.output_text, response_model, model)
+        except Exception as e:
+            if attempt < max_attempts - 1:
+                time.sleep(2 ** attempt)
+                continue
+            raise RuntimeError(
+                f"LLM API call failed after {max_attempts} attempts: {str(e)}"
+            ) from e
+
+    raise RuntimeError("LLM API call failed: maximum attempts reached")
+
+
 def call_llm(
     model: str,
     prompt: str,
@@ -736,6 +807,15 @@ def call_llm(
 
     # Build the OpenAI-compatible client for the configured hosted provider.
     client = _resolve_llm_client(provider, kwargs)
+
+    # Azure reasoning / "pro" models route through the Responses API instead of
+    # chat.completions, selected explicitly via azure_openai_config["api_type"].
+    if provider == PROVIDER_AZURE:
+        azure_config = fetch_data(AZURE_OPENAI_CONFIG_STORED_DATA_KEY)
+        if isinstance(azure_config, list):
+            azure_config = azure_config[0] if azure_config else {}
+        if _azure_api_type(azure_config or {}) == AZURE_API_TYPE_RESPONSES:
+            return _call_llm_responses(client, model, prompt, response_model, kwargs)
 
     # Create prompt with JSON structure instructions
     json_prompt = create_json_prompt(prompt, response_model)
