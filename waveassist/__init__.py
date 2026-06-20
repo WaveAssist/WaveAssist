@@ -25,6 +25,8 @@ from waveassist.constants import (
     PROVIDER_CLAUDE_CLI,
     AZURE_API_TYPE_CHAT,
     AZURE_API_TYPE_RESPONSES,
+    AZURE_RESPONSES_UNSUPPORTED_KWARGS,
+    AZURE_RESPONSES_MIN_OUTPUT_TOKENS,
 )
 from waveassist.utils import (
     call_post_api,
@@ -726,8 +728,14 @@ def _call_llm_responses(
         max_out = kwargs.pop("max_tokens", None)
     # response_format is a chat.completions concept; not accepted here.
     kwargs.pop("response_format", None)
+    # Reasoning / "pro" models reject sampling params (temperature, top_p, ...);
+    # callers pass them blindly, so drop them rather than 400.
+    for unsupported in AZURE_RESPONSES_UNSUPPORTED_KWARGS:
+        kwargs.pop(unsupported, None)
     if max_out is not None:
-        kwargs["max_output_tokens"] = max_out
+        # Reasoning tokens count against this budget; floor it so a value sized
+        # for chat output doesn't truncate the response.
+        kwargs["max_output_tokens"] = max(max_out, AZURE_RESPONSES_MIN_OUTPUT_TOKENS)
 
     max_attempts = 2
     for attempt in range(max_attempts):
