@@ -4,7 +4,9 @@ import pandas as pd
 import time
 import json
 import os
+import shutil
 import subprocess
+import tempfile
 import uuid
 from dotenv import load_dotenv
 from typing import Type, TypeVar, Literal, Optional, Any, BinaryIO
@@ -20,9 +22,11 @@ from waveassist.constants import (
     UNSUPPORTED_JSON_MODELS_ARRAY,
     LLM_PROVIDER_STORED_DATA_KEY,
     AZURE_OPENAI_CONFIG_STORED_DATA_KEY,
+    CLAUDE_SETUP_TOKEN_STORED_DATA_KEY,
     PROVIDER_OPENROUTER,
     PROVIDER_AZURE,
     PROVIDER_CLAUDE_CLI,
+    PROVIDER_CLAUDE_CLI_TOKEN,
     AZURE_API_TYPE_CHAT,
     AZURE_API_TYPE_RESPONSES,
     AZURE_RESPONSES_UNSUPPORTED_KWARGS,
@@ -604,16 +608,40 @@ def _resolve_claude_cli_model(model: str) -> str:
     return model.replace(".", "-")
 
 
+def _parse_claude_cli_result(result, response_model: Type[T], model: str) -> T:
+    """Parse a `claude -p --output-format json` CompletedProcess into the model.
+
+    The CLI wraps the answer in {"result": "...", ...}; fall back to raw stdout
+    if that envelope is absent.
+    """
+    if result.returncode != 0:
+        raise RuntimeError(f"Claude CLI failed: {result.stderr}")
+
+    cli_output = json.loads(result.stdout)
+    content = cli_output.get("result", result.stdout.strip())
+    return parse_json_response(content, response_model, model)
+
+
 def _call_llm_claude_cli(
     model: str,
     prompt: str,
     response_model: Type[T],
+    *,
+    use_setup_token: bool = False,
     **kwargs
 ) -> T:
     """
-    Dev/testing alternative to call_llm that routes through the Claude CLI.
-    Uses the local Claude Max subscription — no API credits needed.
-    Activated by setting LLM_PROVIDER=claude_cli in environment.
+    Alternative to call_llm that routes through the Claude Code CLI (`claude -p`).
+    Draws on a Claude subscription — no OpenRouter/API credits needed.
+
+    Two auth modes:
+      * use_setup_token=False (provider 'claude_cli'): local dev. Inherits the
+        host's existing `claude login`; no token, no env override. Original
+        behavior, activated by LLM_PROVIDER=claude_cli.
+      * use_setup_token=True (provider 'claude_cli_token'): headless on the
+        worker fleet. Authenticates with the account's setup token (stored as the
+        'claude_setup_token' Variable) injected as CLAUDE_CODE_OAUTH_TOKEN into a
+        per-call child environment.
 
     Note: Claude CLI does not support temperature, top_p, or other sampling
     kwargs. Only model, prompt, and response structure are passed through.
@@ -621,6 +649,7 @@ def _call_llm_claude_cli(
     resolved_model = _resolve_claude_cli_model(model)
     json_prompt = create_json_prompt(prompt, response_model)
 
+    # Never pass --bare: bare mode ignores CLAUDE_CODE_OAUTH_TOKEN.
     cmd = [
         "claude", "-p", json_prompt,
         "--output-format", "json",
@@ -628,16 +657,40 @@ def _call_llm_claude_cli(
         "--max-turns", "1",
     ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    if not use_setup_token:
+        # Local dev: inherit the host's `claude login`; no env override.
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        return _parse_claude_cli_result(result, response_model, model)
 
-    if result.returncode != 0:
-        raise RuntimeError(f"Claude CLI failed: {result.stderr}")
+    # Headless fleet auth via the account's setup token (a Variable).
+    token = fetch_data(CLAUDE_SETUP_TOKEN_STORED_DATA_KEY)
+    if not token:
+        raise ValueError(
+            "Claude setup token not found. Generate one with `claude setup-token` "
+            "and store it: "
+            "waveassist.store_data('claude_setup_token', 'sk-ant-oat01-...')"
+        )
 
-    # --output-format json wraps response in {"result": "...", ...}
-    cli_output = json.loads(result.stdout)
-    content = cli_output.get("result", result.stdout.strip())
+    # Per-call isolated config home. Concurrent `claude` runs corrupt a shared
+    # ~/.claude.json (no file locking) and could bleed sessions across tenants on
+    # the shared worker, so each invocation gets its own throwaway CLAUDE_CONFIG_DIR.
+    config_dir = tempfile.mkdtemp(prefix="wa_claude_")
+    try:
+        env = os.environ.copy()
+        env["CLAUDE_CODE_OAUTH_TOKEN"] = str(token)
+        env["CLAUDE_CONFIG_DIR"] = config_dir
+        # ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN outrank the OAuth token in
+        # Claude's auth precedence; leaving them set would silently switch to
+        # per-token API billing instead of the subscription.
+        env.pop("ANTHROPIC_API_KEY", None)
+        env.pop("ANTHROPIC_AUTH_TOKEN", None)
 
-    return parse_json_response(content, response_model, model)
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=600, env=env
+        )
+        return _parse_claude_cli_result(result, response_model, model)
+    finally:
+        shutil.rmtree(config_dir, ignore_errors=True)
 
 
 def _resolve_llm_provider() -> str:
@@ -803,10 +856,18 @@ def call_llm(
             max_tokens=3000,
             extra_body={"web_search_options": {"search_context_size": "medium"}})
     """
-    # Resolve provider: Claude CLI (local) routes before the init/network checks.
+    # Resolve provider: Claude CLI variants route before the init/network checks.
+    # claude_cli       -> local dev (host `claude login`)
+    # claude_cli_token -> headless fleet (account setup token in the child env)
     provider = _resolve_llm_provider()
-    if provider == PROVIDER_CLAUDE_CLI:
-        return _call_llm_claude_cli(model, prompt, response_model, **kwargs)
+    if provider in (PROVIDER_CLAUDE_CLI, PROVIDER_CLAUDE_CLI_TOKEN):
+        return _call_llm_claude_cli(
+            model,
+            prompt,
+            response_model,
+            use_setup_token=(provider == PROVIDER_CLAUDE_CLI_TOKEN),
+            **kwargs,
+        )
 
     if not _config.LOGIN_TOKEN or not _config.PROJECT_KEY:
         raise RuntimeError(
