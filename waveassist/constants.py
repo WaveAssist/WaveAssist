@@ -9,9 +9,16 @@ UNSUPPORTED_JSON_MODELS_ARRAY = ["perplexity", "grok"]
 # LLM provider selection (server-stored per-project setting)
 LLM_PROVIDER_STORED_DATA_KEY = "llm_provider"
 AZURE_OPENAI_CONFIG_STORED_DATA_KEY = "azure_openai_config"
+# Setup token (sk-ant-oat01-...) from `claude setup-token`, stored as a Variable.
+# Used by the claude_cli_token provider; NOT an API key, draws on a subscription.
+CLAUDE_SETUP_TOKEN_STORED_DATA_KEY = "claude_setup_token"
 PROVIDER_OPENROUTER = "openrouter"
 PROVIDER_AZURE = "azure"
+# Claude Code CLI (`claude -p`), two auth modes:
+#   claude_cli       -> local dev, inherits the host's `claude login`
+#   claude_cli_token -> headless fleet, auth via the account's setup token
 PROVIDER_CLAUDE_CLI = "claude_cli"
+PROVIDER_CLAUDE_CLI_TOKEN = "claude_cli_token"
 
 # Azure API surface, set via the "api_type" field in azure_openai_config.
 # Reasoning / "pro" models (gpt-5.x-pro, o1/o3, ...) are not exposed on

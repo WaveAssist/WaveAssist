@@ -285,6 +285,20 @@ CLAUDE_CLI_MODEL=claude-sonnet-4-6  # optional: pin a specific model
 
 No code changes needed — OpenRouter model names (e.g. `anthropic/claude-sonnet-4.6`) are auto-converted. Non-Claude models require `CLAUDE_CLI_MODEL` to be set. Unset `LLM_PROVIDER` to switch back to OpenRouter.
 
+#### Claude on the worker fleet (setup token)
+
+The same `claude -p` path, but authenticated headlessly by a **setup token** so it runs on the WaveAssist workers (where there's no interactive `claude login`). The token draws on your Claude **subscription** — it is *not* an API key and is *not* billed per-token.
+
+```python
+# 1. On a machine logged into Claude, mint a ~1-year token:
+#    $ claude setup-token   ->   sk-ant-oat01-...
+# 2. Store it as a Variable and select the provider (per project):
+waveassist.store_data("claude_setup_token", "sk-ant-oat01-...")
+waveassist.store_data("llm_provider", "claude_cli_token")
+```
+
+On each `call_llm`, the token is injected as `CLAUDE_CODE_OAUTH_TOKEN` into the `claude` subprocess for that call only, with an isolated `CLAUDE_CONFIG_DIR` and conflicting auth (`ANTHROPIC_API_KEY`) scrubbed so the subscription is used. Subject to your subscription's rate limits and Anthropic's terms.
+
 ---
 
 ## 🖥️ Command Line Interface

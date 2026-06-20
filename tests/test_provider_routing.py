@@ -7,6 +7,7 @@ Tests for LLM provider routing in call_llm:
 """
 import sys
 import os
+import json
 from types import SimpleNamespace
 
 # Add the parent directory to sys.path so we can import waveassist
@@ -22,6 +23,7 @@ from waveassist.constants import (
     OPENROUTER_API_STORED_DATA_KEY,
     LLM_PROVIDER_STORED_DATA_KEY,
     AZURE_OPENAI_CONFIG_STORED_DATA_KEY,
+    CLAUDE_SETUP_TOKEN_STORED_DATA_KEY,
 )
 
 
@@ -333,3 +335,122 @@ def test_responses_path_imposes_no_limit_when_unset(azure_routing):
 
     _, kw = created[-1].calls[0]
     assert "max_output_tokens" not in kw
+
+
+# --------------- claude_cli_token (setup-token, headless on the fleet) ---------------
+# Same `claude -p` subprocess as claude_cli, but authenticated by the account's
+# setup token (a Variable) injected into the child env, with an isolated config
+# dir and scrubbed conflicting auth. Provider value: "claude_cli_token".
+
+
+def _fake_claude_run(captured):
+    """Stand-in for subprocess.run that records cmd/kwargs and returns the
+    `claude -p --output-format json` envelope ({"result": "<json string>"})."""
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["kwargs"] = kwargs
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps({"result": '{"ok": true}'}),
+            stderr="",
+        )
+    return fake_run
+
+
+def test_call_llm_routes_to_claude_cli_token(monkeypatch):
+    """provider 'claude_cli_token' routes to the CLI with use_setup_token=True."""
+    sentinel = _Dummy(ok=True)
+    calls = {}
+
+    def fake_cli(model, prompt, response_model, **kwargs):
+        calls["model"] = model
+        calls["use_setup_token"] = kwargs.get("use_setup_token")
+        return sentinel
+
+    def no_openai(**kwargs):
+        raise AssertionError("OpenAI client must not be built for claude_cli_token")
+
+    monkeypatch.setattr(waveassist, "_call_llm_claude_cli", fake_cli)
+    monkeypatch.setattr(waveassist, "OpenAI", no_openai)
+    monkeypatch.setenv("LLM_PROVIDER", "claude_cli_token")
+
+    result = waveassist.call_llm("anthropic/claude-sonnet-4.6", "hi", _Dummy)
+    assert result is sentinel
+    assert calls["use_setup_token"] is True
+
+
+def test_call_llm_local_claude_cli_routes_without_setup_token(monkeypatch):
+    """existing 'claude_cli' provider must route with use_setup_token False (host login)."""
+    calls = {}
+
+    def fake_cli(model, prompt, response_model, **kwargs):
+        calls["use_setup_token"] = kwargs.get("use_setup_token", False)
+        return _Dummy(ok=True)
+
+    monkeypatch.setattr(waveassist, "_call_llm_claude_cli", fake_cli)
+    monkeypatch.setenv("LLM_PROVIDER", "claude_cli")
+
+    waveassist.call_llm("anthropic/claude-sonnet-4.6", "hi", _Dummy)
+    assert calls["use_setup_token"] is False
+
+
+def test_claude_cli_token_injects_token_and_isolates_config(store, monkeypatch):
+    captured = {}
+    store[CLAUDE_SETUP_TOKEN_STORED_DATA_KEY] = "sk-ant-oat01-TESTTOKEN"
+    monkeypatch.delenv("CLAUDE_CLI_MODEL", raising=False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "should-be-removed")
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "should-be-removed")
+    monkeypatch.setattr(waveassist.subprocess, "run", _fake_claude_run(captured))
+
+    result = waveassist._call_llm_claude_cli(
+        "anthropic/claude-sonnet-4.6", "hi", _Dummy, use_setup_token=True
+    )
+    assert isinstance(result, _Dummy) and result.ok is True
+
+    env = captured["kwargs"]["env"]
+    assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "sk-ant-oat01-TESTTOKEN"
+    assert env.get("CLAUDE_CONFIG_DIR")  # isolated per-call config home
+    # conflicting auth must be scrubbed so the OAuth token wins (subscription, not API billing)
+    assert "ANTHROPIC_API_KEY" not in env
+    assert "ANTHROPIC_AUTH_TOKEN" not in env
+    # never bare: bare mode ignores CLAUDE_CODE_OAUTH_TOKEN
+    assert "--bare" not in captured["cmd"]
+    # model still resolved to CLI form
+    assert "claude-sonnet-4-6" in captured["cmd"]
+
+
+def test_claude_cli_token_cleans_up_config_dir(store, monkeypatch):
+    captured = {}
+    store[CLAUDE_SETUP_TOKEN_STORED_DATA_KEY] = "sk-ant-oat01-X"
+    monkeypatch.delenv("CLAUDE_CLI_MODEL", raising=False)
+    monkeypatch.setattr(waveassist.subprocess, "run", _fake_claude_run(captured))
+
+    waveassist._call_llm_claude_cli(
+        "anthropic/claude-sonnet-4.6", "hi", _Dummy, use_setup_token=True
+    )
+    config_dir = captured["kwargs"]["env"]["CLAUDE_CONFIG_DIR"]
+    assert not os.path.exists(config_dir)  # per-call temp dir removed after the run
+
+
+def test_claude_cli_token_missing_token_raises(store, monkeypatch):
+    def boom_run(*a, **k):
+        raise AssertionError("subprocess must not run when no setup token is stored")
+
+    monkeypatch.delenv("CLAUDE_CLI_MODEL", raising=False)
+    monkeypatch.setattr(waveassist.subprocess, "run", boom_run)
+    # store has no 'claude_setup_token'
+    with pytest.raises(ValueError, match="setup token"):
+        waveassist._call_llm_claude_cli(
+            "anthropic/claude-sonnet-4.6", "hi", _Dummy, use_setup_token=True
+        )
+
+
+def test_claude_cli_local_mode_does_not_inject_env(store, monkeypatch):
+    """use_setup_token False (default) preserves today's behavior: no env override,
+    so the subprocess inherits the host's existing `claude login`."""
+    captured = {}
+    monkeypatch.delenv("CLAUDE_CLI_MODEL", raising=False)
+    monkeypatch.setattr(waveassist.subprocess, "run", _fake_claude_run(captured))
+
+    waveassist._call_llm_claude_cli("anthropic/claude-sonnet-4.6", "hi", _Dummy)
+    assert "env" not in captured["kwargs"]
