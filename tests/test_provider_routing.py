@@ -233,7 +233,8 @@ def test_call_llm_azure_responses_uses_responses_api(azure_routing):
         "api_type": "responses",
     }
 
-    result = waveassist.call_llm("gpt-5.4-pro", "hello", _Dummy, max_tokens=500)
+    # Use a value above the floor so this test checks translation, not flooring.
+    result = waveassist.call_llm("gpt-5.4-pro", "hello", _Dummy, max_tokens=10000)
 
     assert isinstance(result, _Dummy) and result.ok is True
     client = created[-1]
@@ -241,7 +242,7 @@ def test_call_llm_azure_responses_uses_responses_api(azure_routing):
     _, kw = client.calls[0]
     assert kw["text_format"] is _Dummy
     # Responses API takes max_output_tokens, never chat-only token args.
-    assert kw["max_output_tokens"] == 500
+    assert kw["max_output_tokens"] == 10000
     assert "max_tokens" not in kw and "max_completion_tokens" not in kw
 
 
@@ -257,3 +258,78 @@ def test_call_llm_azure_chat_completions_is_default(azure_routing):
     assert isinstance(result, _Dummy)
     client = created[-1]
     assert [c[0] for c in client.calls] == ["chat.completions.create"]
+
+
+def test_responses_path_drops_unsupported_sampling_params(azure_routing):
+    # Reasoning / "pro" models reject temperature, top_p, penalties, etc.
+    # Callers (GitZoid, templates) pass these blindly; the responses path must
+    # strip them rather than 400.
+    store, created = azure_routing
+    store[AZURE_OPENAI_CONFIG_STORED_DATA_KEY] = {
+        "api_key": "k",
+        "endpoint": "https://x.openai.azure.com/",
+        "api_type": "responses",
+    }
+
+    result = waveassist.call_llm(
+        "gpt-5.4-pro",
+        "hi",
+        _Dummy,
+        temperature=0.5,
+        top_p=0.9,
+        presence_penalty=0.1,
+        frequency_penalty=0.2,
+        max_tokens=300,
+    )
+
+    assert isinstance(result, _Dummy)
+    _, kw = created[-1].calls[0]
+    for bad in ("temperature", "top_p", "presence_penalty", "frequency_penalty"):
+        assert bad not in kw, f"{bad} must not be forwarded to responses.parse"
+    # 300 is below the floor; see test_responses_path_floors_small_max_output_tokens.
+
+
+def test_responses_path_floors_small_max_output_tokens(azure_routing):
+    # Reasoning models spend max_output_tokens on hidden reasoning first, so a
+    # small caller value truncates -> hard fail. The responses path raises it.
+    store, created = azure_routing
+    store[AZURE_OPENAI_CONFIG_STORED_DATA_KEY] = {
+        "api_key": "k",
+        "endpoint": "https://x.openai.azure.com/",
+        "api_type": "responses",
+    }
+
+    waveassist.call_llm("gpt-5.4-pro", "hi", _Dummy, max_tokens=1200)
+
+    _, kw = created[-1].calls[0]
+    assert kw["max_output_tokens"] == 8000  # floored up from 1200
+
+
+def test_responses_path_preserves_large_max_output_tokens(azure_routing):
+    store, created = azure_routing
+    store[AZURE_OPENAI_CONFIG_STORED_DATA_KEY] = {
+        "api_key": "k",
+        "endpoint": "https://x.openai.azure.com/",
+        "api_type": "responses",
+    }
+
+    waveassist.call_llm("gpt-5.4-pro", "hi", _Dummy, max_tokens=20000)
+
+    _, kw = created[-1].calls[0]
+    assert kw["max_output_tokens"] == 20000  # above floor, untouched
+
+
+def test_responses_path_imposes_no_limit_when_unset(azure_routing):
+    # Caller passed no token arg -> don't invent a cap (the model's default is
+    # large; capping at the floor could truncate where it otherwise wouldn't).
+    store, created = azure_routing
+    store[AZURE_OPENAI_CONFIG_STORED_DATA_KEY] = {
+        "api_key": "k",
+        "endpoint": "https://x.openai.azure.com/",
+        "api_type": "responses",
+    }
+
+    waveassist.call_llm("gpt-5.4-pro", "hi", _Dummy)
+
+    _, kw = created[-1].calls[0]
+    assert "max_output_tokens" not in kw

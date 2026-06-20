@@ -18,3 +18,21 @@ PROVIDER_CLAUDE_CLI = "claude_cli"
 # chat.completions and must use the Responses API.
 AZURE_API_TYPE_CHAT = "chat_completions"
 AZURE_API_TYPE_RESPONSES = "responses"
+
+# Sampling params that reasoning / "pro" models reject with a 400. Callers pass
+# these blindly (e.g. temperature=0.5), so the Responses path strips them.
+AZURE_RESPONSES_UNSUPPORTED_KWARGS = (
+    "temperature",
+    "top_p",
+    "presence_penalty",
+    "frequency_penalty",
+    "logprobs",
+    "top_logprobs",
+    "logit_bias",
+)
+
+# On the Responses API, max_output_tokens covers hidden reasoning tokens AND the
+# visible answer. Small caller values (sized for chat output only) truncate the
+# response -> incomplete -> hard parse failure. Floor an explicit value up to a
+# safe minimum; never impose a cap when the caller passed none.
+AZURE_RESPONSES_MIN_OUTPUT_TOKENS = 8000
