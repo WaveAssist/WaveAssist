@@ -25,6 +25,7 @@ from waveassist.constants import (
     LLM_MODELS_STORED_DATA_KEY,
     LLM_CREDENTIALS_STORED_DATA_KEY,
     CLAUDE_SETUP_TOKEN_STORED_DATA_KEY,
+    RUN_IDLE_STORED_DATA_KEY,
     PROVIDER_OPENROUTER,
     PROVIDER_AZURE,
     PROVIDER_CLAUDE_CLI,
@@ -55,6 +56,7 @@ __all__ = [
     "fetch_openrouter_credits",
     "check_credits_and_notify",
     "call_llm",
+    "mark_run_idle",
     "is_test_run",
     "StoreDataType",
 ]
@@ -1026,6 +1028,24 @@ def call_llm(
             return _call_llm_responses(client, model, prompt, response_model, kwargs)
 
     return _call_llm_chat(client, model, prompt, response_model, should_retry, kwargs)
+
+
+def mark_run_idle() -> bool:
+    """Mark the CURRENT run as idle — it executed but did no meaningful work (e.g. found no new PR,
+    ran a silent security scan, or skipped a cycle). Call this on your node's "nothing to do" branch,
+    the same way you call ``store_data("display_output", ...)`` for output.
+
+    It writes a tiny run-scoped flag (``run_idle``); the dashboard collapses idle runs into a single
+    heartbeat instead of listing each one. A run that does real work simply never calls this — the
+    flag's ABSENCE means "did work" and the run is shown normally. A FAILED run is always shown
+    regardless of this flag, so a crash that never reaches this call cannot be mislabeled as idle.
+
+    ``display_output`` is untouched and stays purely presentational, so an idle run can still show a
+    rich "all clear" message when expanded.
+
+    Returns True on success, False otherwise.
+    """
+    return store_data(RUN_IDLE_STORED_DATA_KEY, "1", run_based=True, data_type="string")
 
 
 _IS_TEST_RUN_KEY = "_is_test_run"
