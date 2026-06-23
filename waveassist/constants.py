@@ -18,6 +18,10 @@ LLM_CREDENTIALS_STORED_DATA_KEY = "llm_credentials"
 # Setup token (sk-ant-oat01-...) from `claude setup-token`, stored as a Variable.
 # Used by the claude_cli_token provider; NOT an API key, draws on a subscription.
 CLAUDE_SETUP_TOKEN_STORED_DATA_KEY = "claude_setup_token"
+# Run-scoped flag (like display_output) the assistant sets when a cycle did no meaningful work
+# (no new PR, a silent scan, a skipped cycle). Absent => the run did work and is shown normally; a
+# FAILED run is shown regardless. The dashboard collapses idle runs into a heartbeat count.
+RUN_IDLE_STORED_DATA_KEY = "run_idle"
 PROVIDER_OPENROUTER = "openrouter"
 PROVIDER_AZURE = "azure"
 # Claude Code CLI (`claude -p`), two auth modes:
