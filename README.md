@@ -299,6 +299,47 @@ waveassist.store_data("llm_provider", "claude_cli_token")
 
 On each `call_llm`, the token is injected as `CLAUDE_CODE_OAUTH_TOKEN` into the `claude` subprocess for that call only, with an isolated `CLAUDE_CONFIG_DIR` and conflicting auth (`ANTHROPIC_API_KEY`) scrubbed so the subscription is used. Subject to your subscription's rate limits and Anthropic's terms.
 
+#### Per-model providers (`llm_models` registry)
+
+To mix providers in one project — say one model on Azure, another on a Claude subscription, the rest on OpenRouter, or just a lighter model for a cheaper step — store an `llm_models` registry keyed by the model name your code passes to `call_llm`. Each entry is **self-contained**: it carries its own `provider`, real `model` id, credentials, and any provider-specific knobs (Azure `api_type`, `api_base`). A model **not** in the registry falls back to the legacy global resolution, which defaults to OpenRouter — so the common path needs no registry at all.
+
+```python
+waveassist.store_data("llm_models", {
+    # Azure reasoning model on the Responses API
+    "gpt-5.4-pro": {"provider": "azure", "model": "gpt-5.4-pro", "api_type": "responses",
+                    "api_base": "https://<resource>.openai.azure.com/", "api_key": "..."},
+    # Azure chat model on the same account, different API surface
+    "gpt-5.4":     {"provider": "azure", "model": "gpt-5.4", "api_type": "completions",
+                    "api_base": "https://<resource>.openai.azure.com/", "api_key": "..."},
+    # Claude subscription via setup token (headless / cloud)
+    "haiku":       {"provider": "claude_cli_token", "model": "claude-haiku-4-5", "token": "sk-ant-oat01-..."},
+    # Local Claude login (dev)
+    "sonnet":      {"provider": "claude_cli", "model": "claude-sonnet-4-6"},
+    # Explicit OpenRouter entry (optional — or just omit and rely on the default)
+    "gpt-4o":      {"provider": "openrouter", "model": "openai/gpt-4o", "api_key": "..."},
+})
+```
+
+Nodes keep passing the alias as usual, so different roles can use different models with **no code change**:
+
+```python
+waveassist.store_data("model_name", "gpt-5.4-pro")   # main model
+waveassist.store_data("brain_model", "gpt-5.4")      # a lighter model for a cheaper step
+```
+
+**Shared credentials (optional).** When several models share one account/key, store the secret once and reference it; inline entry fields override the shared block:
+
+```python
+waveassist.store_data("llm_credentials",
+    {"acme_azure": {"api_key": "...", "api_base": "https://<resource>.openai.azure.com/"}})
+waveassist.store_data("llm_models", {
+    "gpt-5.4-pro": {"provider": "azure", "model": "gpt-5.4-pro", "api_type": "responses",   "credential": "acme_azure"},
+    "gpt-5.4":     {"provider": "azure", "model": "gpt-5.4",     "api_type": "completions", "credential": "acme_azure"},
+})
+```
+
+**Resolution order:** `LLM_PROVIDER` env override (local Claude CLI) → `llm_models` registry → legacy `llm_provider` / `azure_openai_config` → OpenRouter default. Existing projects keep working unchanged; the registry is purely additive.
+
 ---
 
 ## 🖥️ Command Line Interface

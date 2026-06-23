@@ -22,6 +22,8 @@ from waveassist.constants import (
     UNSUPPORTED_JSON_MODELS_ARRAY,
     LLM_PROVIDER_STORED_DATA_KEY,
     AZURE_OPENAI_CONFIG_STORED_DATA_KEY,
+    LLM_MODELS_STORED_DATA_KEY,
+    LLM_CREDENTIALS_STORED_DATA_KEY,
     CLAUDE_SETUP_TOKEN_STORED_DATA_KEY,
     PROVIDER_OPENROUTER,
     PROVIDER_AZURE,
@@ -628,6 +630,7 @@ def _call_llm_claude_cli(
     response_model: Type[T],
     *,
     use_setup_token: bool = False,
+    setup_token: Optional[str] = None,
     **kwargs
 ) -> T:
     """
@@ -639,9 +642,10 @@ def _call_llm_claude_cli(
         host's existing `claude login`; no token, no env override. Original
         behavior, activated by LLM_PROVIDER=claude_cli.
       * use_setup_token=True (provider 'claude_cli_token'): headless on the
-        worker fleet. Authenticates with the account's setup token (stored as the
-        'claude_setup_token' Variable) injected as CLAUDE_CODE_OAUTH_TOKEN into a
-        per-call child environment.
+        worker fleet. Authenticates with a setup token injected as
+        CLAUDE_CODE_OAUTH_TOKEN into a per-call child environment. The token comes
+        from `setup_token` when given (e.g. an llm_models registry entry), else
+        from the account's 'claude_setup_token' Variable.
 
     Note: Claude CLI does not support temperature, top_p, or other sampling
     kwargs. Only model, prompt, and response structure are passed through.
@@ -662,8 +666,8 @@ def _call_llm_claude_cli(
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         return _parse_claude_cli_result(result, response_model, model)
 
-    # Headless fleet auth via the account's setup token (a Variable).
-    token = fetch_data(CLAUDE_SETUP_TOKEN_STORED_DATA_KEY)
+    # Headless auth: explicit registry token wins, else the account's setup-token Variable.
+    token = setup_token or fetch_data(CLAUDE_SETUP_TOKEN_STORED_DATA_KEY)
     if not token:
         raise ValueError(
             "Claude setup token not found. Generate one with `claude setup-token` "
@@ -815,6 +819,128 @@ def _call_llm_responses(
     raise RuntimeError("LLM API call failed: maximum attempts reached")
 
 
+def _azure_base(api_base: str) -> str:
+    """Normalize an Azure endpoint to the OpenAI-compatible v1 base the client expects. Accepts a bare
+    resource URL ('https://x.openai.azure.com/') or one already ending in '/openai/v1'."""
+    b = (api_base or "").rstrip("/")
+    if not b.endswith("/openai/v1"):
+        b = b + "/openai/v1"
+    return b + "/"
+
+
+def _resolve_model_entry(model: str):
+    """Look up `model` (an alias) in the per-project `llm_models` registry. Returns a self-contained,
+    credential-resolved entry dict, or None when there is no registry / no matching entry — in which
+    case call_llm falls back to the legacy global resolution (which itself defaults to OpenRouter).
+    An entry may carry creds inline, or point at a shared credential via {"credential": "<ref>"}
+    resolved from `llm_credentials` (inline entry fields win over the shared block)."""
+    if not _config.LOGIN_TOKEN or not _config.PROJECT_KEY:
+        return None
+    try:
+        registry = fetch_data(LLM_MODELS_STORED_DATA_KEY)
+    except Exception:
+        return None
+    if isinstance(registry, list):
+        registry = registry[0] if registry else None
+    if not isinstance(registry, dict):
+        return None
+    entry = registry.get(model)
+    if not isinstance(entry, dict):
+        return None
+    cred_ref = entry.get("credential")
+    if cred_ref:
+        creds = fetch_data(LLM_CREDENTIALS_STORED_DATA_KEY)
+        if isinstance(creds, list):
+            creds = creds[0] if creds else {}
+        shared = creds.get(cred_ref, {}) if isinstance(creds, dict) else {}
+        if isinstance(shared, dict):
+            return {**shared, **entry}
+    return dict(entry)
+
+
+def _call_llm_chat(client, model, prompt, response_model, should_retry, kwargs):
+    """Shared OpenAI-compatible chat.completions path (OpenRouter + Azure chat models): JSON-format
+    response, soft-parse, one transport retry, plus one optional format retry when should_retry."""
+    json_prompt = create_json_prompt(prompt, response_model)
+    kwargs.pop("response_format", None)
+    response_format = {"type": "json_object"}
+    if any(x in model.lower() for x in UNSUPPORTED_JSON_MODELS_ARRAY):
+        response_format = None
+
+    max_attempts = 2
+    format_error_retried = False
+    for attempt in range(max_attempts):
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": json_prompt}],
+                response_format=response_format,
+                **kwargs
+            )
+            content = response.choices[0].message.content
+            try:
+                return parse_json_response(content, response_model, model)
+            except ValueError:
+                if should_retry and not format_error_retried:
+                    format_error_retried = True
+                    json_prompt = create_json_prompt(
+                        prompt + "\n\nIMPORTANT: Your previous response was invalid JSON. You must output ONLY valid JSON matching the schema, with no explanations or other text.",
+                        response_model
+                    )
+                    if 'temperature' not in kwargs:
+                        kwargs['temperature'] = 0.2
+                    continue
+                raise
+        except ValueError:
+            raise
+        except Exception as e:
+            if attempt < max_attempts - 1:
+                time.sleep(2 ** attempt)
+                continue
+            raise RuntimeError(
+                f"LLM API call failed after {max_attempts} attempts: {str(e)}"
+            ) from e
+    raise RuntimeError("LLM API call failed: maximum attempts reached")
+
+
+def _call_llm_via_entry(entry, alias, prompt, response_model, should_retry, kwargs):
+    """Dispatch one call using a self-contained `llm_models` entry: provider + model + creds + (azure)
+    api_type all come from the entry, so different models on one project can use different providers."""
+    provider = (entry.get("provider") or "").strip().lower()
+    model_id = entry.get("model") or alias
+
+    if provider in (PROVIDER_CLAUDE_CLI, PROVIDER_CLAUDE_CLI_TOKEN):
+        return _call_llm_claude_cli(
+            model_id, prompt, response_model,
+            use_setup_token=(provider == PROVIDER_CLAUDE_CLI_TOKEN),
+            setup_token=entry.get("token") or entry.get("api_key"),
+            **kwargs,
+        )
+
+    if provider == PROVIDER_AZURE:
+        api_key = entry.get("api_key") or entry.get("token")
+        if not api_key or not entry.get("api_base"):
+            raise ValueError(f"llm_models['{alias}']: azure requires 'api_base' and 'api_key'.")
+        client = OpenAI(api_key=api_key, base_url=_azure_base(entry["api_base"]))
+        if (entry.get("api_type") or "").strip().lower() == AZURE_API_TYPE_RESPONSES:
+            return _call_llm_responses(client, model_id, prompt, response_model, kwargs)
+        # Newer Azure chat models require max_completion_tokens instead of max_tokens.
+        if "max_tokens" in kwargs and "max_completion_tokens" not in kwargs:
+            kwargs["max_completion_tokens"] = kwargs.pop("max_tokens")
+        return _call_llm_chat(client, model_id, prompt, response_model, should_retry, kwargs)
+
+    if provider in ("", PROVIDER_OPENROUTER):
+        api_key = entry.get("api_key") or fetch_data(OPENROUTER_API_STORED_DATA_KEY)
+        if not api_key:
+            raise ValueError(
+                f"llm_models['{alias}']: OpenRouter needs an 'api_key' or a stored open_router_key."
+            )
+        client = OpenAI(api_key=api_key, base_url=OPENROUTER_URL)
+        return _call_llm_chat(client, model_id, prompt, response_model, should_retry, kwargs)
+
+    raise ValueError(f"llm_models['{alias}']: unknown provider '{provider}'.")
+
+
 def call_llm(
     model: str,
     prompt: str,
@@ -856,15 +982,28 @@ def call_llm(
             max_tokens=3000,
             extra_body={"web_search_options": {"search_context_size": "medium"}})
     """
-    # Resolve provider: Claude CLI variants route before the init/network checks.
-    # claude_cli       -> local dev (host `claude login`)
-    # claude_cli_token -> headless fleet (account setup token in the child env)
+    # 1) Explicit env override (local dev) wins globally: route to the Claude CLI.
+    env_provider = (os.environ.get("LLM_PROVIDER") or "").strip().lower()
+    if env_provider in (PROVIDER_CLAUDE_CLI, PROVIDER_CLAUDE_CLI_TOKEN):
+        return _call_llm_claude_cli(
+            model, prompt, response_model,
+            use_setup_token=(env_provider == PROVIDER_CLAUDE_CLI_TOKEN),
+            **kwargs,
+        )
+
+    # 2) Per-model registry: a self-contained entry carries its own provider + creds + api_type, so
+    #    one project can mix Azure / Claude / OpenRouter per model. Absent (the common OpenRouter
+    #    case) -> fall through to the legacy global resolution below.
+    entry = _resolve_model_entry(model)
+    if entry is not None:
+        return _call_llm_via_entry(entry, model, prompt, response_model, should_retry, kwargs)
+
+    # 3) Legacy global resolution (backward compatible): stored llm_provider / azure_openai_config,
+    #    else OpenRouter. Unchanged for any project without an llm_models registry.
     provider = _resolve_llm_provider()
     if provider in (PROVIDER_CLAUDE_CLI, PROVIDER_CLAUDE_CLI_TOKEN):
         return _call_llm_claude_cli(
-            model,
-            prompt,
-            response_model,
+            model, prompt, response_model,
             use_setup_token=(provider == PROVIDER_CLAUDE_CLI_TOKEN),
             **kwargs,
         )
@@ -886,71 +1025,7 @@ def call_llm(
         if _azure_api_type(azure_config or {}) == AZURE_API_TYPE_RESPONSES:
             return _call_llm_responses(client, model, prompt, response_model, kwargs)
 
-    # Create prompt with JSON structure instructions
-    json_prompt = create_json_prompt(prompt, response_model)
-    
-    # Remove response_format from kwargs to avoid duplicate
-    kwargs.pop("response_format", None)
-    
-    # Check if model supports JSON format
-    response_format = {"type": "json_object"}
-    
-    # Check if model is in the unsupported JSON models array
-    if any(x in model.lower() for x in UNSUPPORTED_JSON_MODELS_ARRAY):
-        response_format = None 
-    
-    # Attempt the API call with retry logic
-    # Any API error: retry once with backoff (max 2 attempts total)
-    # For format errors: retry once if should_retry=True (max 2 attempts total)
-    max_attempts = 2
-    format_error_retried = False
-    
-    for attempt in range(max_attempts):
-        try:
-            # Make API call with JSON response format
-            response = client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": json_prompt}],
-                response_format=response_format,
-                **kwargs
-            )
-            
-            # Extract and parse the response
-            content = response.choices[0].message.content
-            
-            try:
-                return parse_json_response(content, response_model, model)
-            except ValueError as format_error:
-                # Format error - only retry if should_retry=True and haven't retried yet
-                if should_retry and not format_error_retried:
-                    format_error_retried = True
-                    # Strengthen the prompt for retry
-                    json_prompt = create_json_prompt(
-                        prompt + "\n\nIMPORTANT: Your previous response was invalid JSON. You must output ONLY valid JSON matching the schema, with no explanations or other text.",
-                        response_model
-                    )
-                    # Lower temperature if not already set to improve consistency
-                    if 'temperature' not in kwargs:
-                        kwargs['temperature'] = 0.2
-                    continue
-                else:
-                    # No retry allowed or already retried, raise the error
-                    raise
-                    
-        except ValueError:
-            # parse_json_response format error that wasn't retried above
-            raise
-        except Exception as e:
-            # Any API/network error - retry once with backoff, then raise
-            if attempt < max_attempts - 1:
-                time.sleep(2 ** attempt)
-                continue
-            raise RuntimeError(
-                f"LLM API call failed after {max_attempts} attempts: {str(e)}"
-            ) from e
-
-    # Should never reach here, but handle edge case
-    raise RuntimeError("LLM API call failed: maximum attempts reached")
+    return _call_llm_chat(client, model, prompt, response_model, should_retry, kwargs)
 
 
 _IS_TEST_RUN_KEY = "_is_test_run"
