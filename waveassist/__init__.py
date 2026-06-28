@@ -633,6 +633,7 @@ def _call_llm_claude_cli(
     *,
     use_setup_token: bool = False,
     setup_token: Optional[str] = None,
+    claude_cli_args=None,
     **kwargs
 ) -> T:
     """
@@ -656,12 +657,18 @@ def _call_llm_claude_cli(
     json_prompt = create_json_prompt(prompt, response_model)
 
     # Never pass --bare: bare mode ignores CLAUDE_CODE_OAUTH_TOKEN.
+    # Callers may pass extra CLI flags via claude_cli_args (e.g. image OCR needs
+    # --add-dir / --allowedTools Read / a higher --max-turns). The default --max-turns 1
+    # is kept for text callers and only dropped when the caller supplies its own.
+    extra = list(claude_cli_args or [])
     cmd = [
         "claude", "-p", json_prompt,
         "--output-format", "json",
         "--model", resolved_model,
-        "--max-turns", "1",
     ]
+    if "--max-turns" not in extra:
+        cmd += ["--max-turns", "1"]
+    cmd += extra
 
     if not use_setup_token:
         # Local dev: inherit the host's `claude login`; no env override.
@@ -905,7 +912,7 @@ def _call_llm_chat(client, model, prompt, response_model, should_retry, kwargs):
     raise RuntimeError("LLM API call failed: maximum attempts reached")
 
 
-def _call_llm_via_entry(entry, alias, prompt, response_model, should_retry, kwargs):
+def _call_llm_via_entry(entry, alias, prompt, response_model, should_retry, kwargs, claude_cli_args=None):
     """Dispatch one call using a self-contained `llm_models` entry: provider + model + creds + (azure)
     api_type all come from the entry, so different models on one project can use different providers."""
     provider = (entry.get("provider") or "").strip().lower()
@@ -916,6 +923,7 @@ def _call_llm_via_entry(entry, alias, prompt, response_model, should_retry, kwar
             model_id, prompt, response_model,
             use_setup_token=(provider == PROVIDER_CLAUDE_CLI_TOKEN),
             setup_token=entry.get("token") or entry.get("api_key"),
+            claude_cli_args=claude_cli_args,
             **kwargs,
         )
 
@@ -948,6 +956,7 @@ def call_llm(
     prompt: str,
     response_model: Type[T],
     should_retry: bool = False,
+    claude_cli_args=None,
     **kwargs
 ) -> T:
     """
@@ -990,6 +999,7 @@ def call_llm(
         return _call_llm_claude_cli(
             model, prompt, response_model,
             use_setup_token=(env_provider == PROVIDER_CLAUDE_CLI_TOKEN),
+            claude_cli_args=claude_cli_args,
             **kwargs,
         )
 
@@ -998,7 +1008,8 @@ def call_llm(
     #    case) -> fall through to the legacy global resolution below.
     entry = _resolve_model_entry(model)
     if entry is not None:
-        return _call_llm_via_entry(entry, model, prompt, response_model, should_retry, kwargs)
+        return _call_llm_via_entry(entry, model, prompt, response_model, should_retry, kwargs,
+                                   claude_cli_args=claude_cli_args)
 
     # 3) Legacy global resolution (backward compatible): stored llm_provider / azure_openai_config,
     #    else OpenRouter. Unchanged for any project without an llm_models registry.
@@ -1007,6 +1018,7 @@ def call_llm(
         return _call_llm_claude_cli(
             model, prompt, response_model,
             use_setup_token=(provider == PROVIDER_CLAUDE_CLI_TOKEN),
+            claude_cli_args=claude_cli_args,
             **kwargs,
         )
 

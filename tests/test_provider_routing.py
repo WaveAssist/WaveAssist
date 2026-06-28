@@ -454,3 +454,77 @@ def test_claude_cli_local_mode_does_not_inject_env(store, monkeypatch):
 
     waveassist._call_llm_claude_cli("anthropic/claude-sonnet-4.6", "hi", _Dummy)
     assert "env" not in captured["kwargs"]
+
+
+# --------------- claude_cli_args passthrough (image OCR / extra CLI flags) ---------------
+
+
+def test_claude_cli_args_appended_and_overrides_max_turns(store, monkeypatch):
+    captured = {}
+    store[CLAUDE_SETUP_TOKEN_STORED_DATA_KEY] = "sk-ant-oat01-X"
+    monkeypatch.delenv("CLAUDE_CLI_MODEL", raising=False)
+    monkeypatch.setattr(waveassist.subprocess, "run", _fake_claude_run(captured))
+
+    waveassist._call_llm_claude_cli(
+        "anthropic/claude-sonnet-4.6", "read it", _Dummy, use_setup_token=True,
+        claude_cli_args=["--add-dir", "/tmp/x", "--allowedTools", "Read", "--max-turns", "3"],
+    )
+    cmd = captured["cmd"]
+    assert "--add-dir" in cmd and "/tmp/x" in cmd
+    assert "--allowedTools" in cmd and "Read" in cmd
+    # caller supplied --max-turns, so the default 1 is NOT added (exactly one, = 3)
+    assert cmd.count("--max-turns") == 1
+    assert cmd[cmd.index("--max-turns") + 1] == "3"
+
+
+def test_claude_cli_args_default_keeps_max_turns_1(store, monkeypatch):
+    captured = {}
+    store[CLAUDE_SETUP_TOKEN_STORED_DATA_KEY] = "sk-ant-oat01-X"
+    monkeypatch.delenv("CLAUDE_CLI_MODEL", raising=False)
+    monkeypatch.setattr(waveassist.subprocess, "run", _fake_claude_run(captured))
+
+    waveassist._call_llm_claude_cli("anthropic/claude-sonnet-4.6", "hi", _Dummy, use_setup_token=True)
+    cmd = captured["cmd"]
+    assert cmd.count("--max-turns") == 1
+    assert cmd[cmd.index("--max-turns") + 1] == "1"
+
+
+def test_call_llm_threads_claude_cli_args_env_path(monkeypatch):
+    """call_llm forwards claude_cli_args to the claude path (env-override route)."""
+    calls = {}
+
+    def fake_cli(model, prompt, response_model, **kwargs):
+        calls["claude_cli_args"] = kwargs.get("claude_cli_args")
+        return _Dummy(ok=True)
+
+    monkeypatch.setattr(waveassist, "_call_llm_claude_cli", fake_cli)
+    monkeypatch.setenv("LLM_PROVIDER", "claude_cli")
+    waveassist.call_llm("m", "hi", _Dummy, claude_cli_args=["--add-dir", "/tmp/x"])
+    assert calls["claude_cli_args"] == ["--add-dir", "/tmp/x"]
+
+
+def test_call_llm_threads_claude_cli_args_registry_path(monkeypatch):
+    """claude_cli_args also threads through the llm_models registry route."""
+    calls = {}
+
+    def fake_cli(model, prompt, response_model, **kwargs):
+        calls["claude_cli_args"] = kwargs.get("claude_cli_args")
+        return _Dummy(ok=True)
+
+    monkeypatch.setattr(waveassist, "_call_llm_claude_cli", fake_cli)
+    monkeypatch.setattr(waveassist, "_resolve_model_entry",
+                        lambda m: {"provider": "claude_cli_token", "model": "sonnet", "token": "sk-x"})
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    waveassist.call_llm("sonnet", "hi", _Dummy, claude_cli_args=["--add-dir", "/tmp/x"])
+    assert calls["claude_cli_args"] == ["--add-dir", "/tmp/x"]
+
+
+def test_claude_cli_args_not_leaked_to_hosted_create(azure_routing):
+    """As a named param, claude_cli_args must never reach the OpenAI/OpenRouter create()."""
+    store, created = azure_routing
+    store[AZURE_OPENAI_CONFIG_STORED_DATA_KEY] = {
+        "api_key": "k", "endpoint": "https://x.openai.azure.com/",
+    }
+    waveassist.call_llm("gpt-5.4", "hi", _Dummy, claude_cli_args=["--add-dir", "/tmp/x"])
+    _, kw = created[-1].calls[0]
+    assert "claude_cli_args" not in kw
