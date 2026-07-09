@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
 import uuid
 from dotenv import load_dotenv
 from typing import Type, TypeVar, Literal, Optional, Any, BinaryIO
@@ -622,6 +623,18 @@ def _parse_claude_cli_result(result, response_model: Type[T], model: str) -> T:
         raise RuntimeError(f"Claude CLI failed: {result.stderr}")
 
     cli_output = json.loads(result.stdout)
+    # claude -p --output-format json returns total_cost_usd + a usage object; capture both.
+    try:
+        _usage = cli_output.get("usage") or {}
+        _record_llm_usage(
+            model,
+            "claude_cli",
+            _usage.get("input_tokens"),
+            _usage.get("output_tokens"),
+            cli_output.get("total_cost_usd"),
+        )
+    except Exception:
+        pass
     content = cli_output.get("result", result.stdout.strip())
     return parse_json_response(content, response_model, model)
 
@@ -812,6 +825,17 @@ def _call_llm_responses(
                 text_format=response_model,
                 **kwargs,
             )
+            try:
+                _u = getattr(response, "usage", None)
+                _record_llm_usage(
+                    model,
+                    _provider_from_client(client),
+                    getattr(_u, "input_tokens", None),
+                    getattr(_u, "output_tokens", None),
+                    None,  # Azure returns tokens only; cost is derived downstream
+                )
+            except Exception:
+                pass
             parsed = response.output_parsed
             if parsed is not None:
                 return parsed
@@ -867,6 +891,58 @@ def _resolve_model_entry(model: str):
     return dict(entry)
 
 
+def _provider_from_client(client) -> str:
+    """Best-effort provider label from the OpenAI-compatible client's base_url."""
+    base = str(getattr(client, "base_url", "") or "").lower()
+    if "azure" in base:
+        return "azure"
+    if "openrouter" in base:
+        return "openrouter"
+    return "openai"
+
+
+def _post_usage(payload):
+    """Send one usage row. Short timeout so a slow/unreachable API can never delay the
+    agent; all errors swallowed because analytics is strictly best-effort."""
+    try:
+        from waveassist.constants import API_BASE_URL
+        requests.post(f"{API_BASE_URL}/sdk/record_usage/", json=payload, timeout=5)
+    except Exception:
+        pass
+
+
+def _record_llm_usage(model, provider, input_tokens=None, output_tokens=None, cost_usd=None):
+    """Log one LLM usage event to the WaveAssist analytics ledger.
+
+    Fire-and-forget on a daemon thread, so tracking adds zero latency to (and can never
+    block) the agent's LLM call. Tokens are sent whenever the provider returns them (every
+    provider does); cost only when available. Identity comes from the process-global runtime
+    config set by init(). No-ops outside a WaveAssist run.
+    """
+    try:
+        if not getattr(_config, "LOGIN_TOKEN", None) or not getattr(_config, "PROJECT_KEY", None):
+            return
+        run_id = getattr(_config, "RUN_ID", None)
+        payload = {
+            "uid": _config.LOGIN_TOKEN,
+            "project_key": _config.PROJECT_KEY,
+            "environment_key": getattr(_config, "ENVIRONMENT_KEY", "") or "",
+            "run_id": str(run_id) if run_id else "",
+            "source": "llm",
+            "provider": provider or "",
+            "model": str(model or ""),
+        }
+        if input_tokens is not None:
+            payload["input_tokens"] = int(input_tokens)
+        if output_tokens is not None:
+            payload["output_tokens"] = int(output_tokens)
+        if cost_usd is not None:
+            payload["cost_usd"] = float(cost_usd)
+        threading.Thread(target=_post_usage, args=(payload,), daemon=True).start()
+    except Exception:
+        pass
+
+
 def _call_llm_chat(client, model, prompt, response_model, should_retry, kwargs):
     """Shared OpenAI-compatible chat.completions path (OpenRouter + Azure chat models): JSON-format
     response, soft-parse, one transport retry, plus one optional format retry when should_retry."""
@@ -887,6 +963,17 @@ def _call_llm_chat(client, model, prompt, response_model, should_retry, kwargs):
                 **kwargs
             )
             content = response.choices[0].message.content
+            try:
+                _u = getattr(response, "usage", None)
+                _record_llm_usage(
+                    model,
+                    _provider_from_client(client),
+                    getattr(_u, "prompt_tokens", None),
+                    getattr(_u, "completion_tokens", None),
+                    getattr(_u, "cost", None),  # present only if usage.include was requested
+                )
+            except Exception:
+                pass
             try:
                 return parse_json_response(content, response_model, model)
             except ValueError:
