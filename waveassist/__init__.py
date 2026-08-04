@@ -983,8 +983,10 @@ def _call_llm_chat(client, model, prompt, response_model, should_retry, kwargs):
                         prompt + "\n\nIMPORTANT: Your previous response was invalid JSON. You must output ONLY valid JSON matching the schema, with no explanations or other text.",
                         response_model
                     )
-                    if 'temperature' not in kwargs:
-                        kwargs['temperature'] = 0.2
+                    # Retry relies on the json_object format + stern reprompt above.
+                    # Do NOT force a sampling temperature here: reasoning models
+                    # (o1/o3, gpt-5.x, ...) reject any non-default temperature with a
+                    # 400, which would turn a recoverable parse failure into a hard fail.
                     continue
                 raise
         except ValueError:
